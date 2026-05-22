@@ -645,7 +645,7 @@ async function refreshRoutes() {
     
     renderList();
     updateStats();
-    updateDashboard();
+    renderDashboard();
     
     if (newRoutes.length > 0) {
       showToast(`🆕 发现 ${newRoutes.length} 个新接口：${newRoutes.map(r => r.path).join(', ')}`);
