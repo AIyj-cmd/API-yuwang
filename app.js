@@ -466,16 +466,45 @@ function viewDetail(index) {
         <span class="method-badge ${route.method.toLowerCase()}">${route.method}</span>
         <code style="flex:1">${route.path}</code>
       </div>
-      ${route.method !== 'GET' ? `
+      ${(() => {
+        const risk = route.riskOverride || route.detectedRisk || route.riskLevel;
+        const auth = route.accessOverride || route.detectedAuth || route.authType;
+        const isHighRisk = route.method === 'DELETE' || risk === 'high' || auth === 'admin';
+        const isWrite = ['POST','PATCH','PUT'].includes(route.method);
+        const isGet = route.method === 'GET';
+        let hint = '', btnLabel = '', btnClass = '';
+        if (isGet) {
+          hint = '🟢 真实请求 — 会实际调用后端接口';
+          btnLabel = '🚀 发送请求';
+          btnClass = 'btn-primary';
+        } else if (isHighRisk) {
+          hint = '🔒 仅模拟 — 高风险/管理员接口禁止真实执行';
+          btnLabel = '🔒 模拟请求';
+          btnClass = 'btn-secondary';
+        } else if (isWrite) {
+          hint = '🧪 模拟请求 — 不会真实写入数据';
+          btnLabel = '🧪 模拟请求';
+          btnClass = 'btn-secondary';
+        } else {
+          hint = '🧪 模拟请求';
+          btnLabel = '🧪 模拟请求';
+          btnClass = 'btn-secondary';
+        }
+        return `
+      <div style="margin-bottom:8px;padding:8px 12px;background:${isGet?'#ecfdf5':'#fef3c7'};border-radius:6px;font-size:12px;color:${isGet?'#065f46':'#92400e'}">
+        ${hint}
+      </div>
+      ${!isGet ? `
       <div style="margin-bottom:12px">
         <label style="font-size:12px;color:#6b7280;display:block;margin-bottom:4px">请求体 (JSON)</label>
         <textarea id="testBody" style="width:100%;padding:8px;border:1px solid #d1d5db;border-radius:6px;font-family:monospace;font-size:13px;min-height:80px" placeholder='{"key": "value"}'></textarea>
       </div>
       ` : ''}
       <div style="display:flex;gap:8px;align-items:center">
-        <button class="btn btn-primary" onclick="sendTestRequest(${index})">🚀 发送请求</button>
+        <button class="btn ${btnClass}" onclick="sendTestRequest(${index})">${btnLabel}</button>
         <span id="testStatus" style="font-size:13px;color:#6b7280"></span>
-      </div>
+      </div>`;
+      })()}
       <div id="testResult" style="margin-top:12px;display:none">
         <label style="font-size:12px;color:#6b7280;display:block;margin-bottom:4px">响应结果</label>
         <pre id="testResponse" style="padding:12px;background:#1f2937;color:#10b981;border-radius:6px;font-size:12px;overflow-x:auto;max-height:300px;overflow-y:auto"></pre>
@@ -520,6 +549,7 @@ async function sendTestRequest(index) {
       }
     }
 
+    const isDryRun = route.method !== 'GET';
     const proxyRes = await fetch('/api/proxy', {
       credentials: 'include',
       method: 'POST',
@@ -527,13 +557,15 @@ async function sendTestRequest(index) {
       body: JSON.stringify({
         targetMethod: route.method,
         targetPath: route.path,
-        requestBody: options.body ? JSON.parse(options.body) : undefined
+        requestBody: options.body ? JSON.parse(options.body) : undefined,
+        dryRun: isDryRun
       })
     });
     const elapsed = Date.now() - startTime;
     const data = await proxyRes.json();
 
-    statusEl.textContent = `${proxyRes.status} ${proxyRes.statusText} · ${elapsed}ms`;
+    const prefix = isDryRun ? '🧪 模拟' : '🟢 真实';
+    statusEl.textContent = `${prefix} · ${proxyRes.status} · ${elapsed}ms`;
     statusEl.style.color = proxyRes.ok ? '#10b981' : '#ef4444';
     responseEl.textContent = JSON.stringify(data, null, 2);
     resultEl.style.display = 'block';
