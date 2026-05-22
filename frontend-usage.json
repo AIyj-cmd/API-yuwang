@@ -1,0 +1,98 @@
+{
+  "/api/announcements": [
+    "api.ts"
+  ],
+  "/api/groups/join-by-code": [
+    "api.ts"
+  ],
+  "/api/checkins/me": [
+    "api.ts"
+  ],
+  "/api/auth/me": [
+    "api.ts"
+  ],
+  "/api/auth/register": [
+    "api.ts"
+  ],
+  "/api/admin/review-queue": [
+    "api.ts"
+  ],
+  "/api/guilds": [
+    "api.ts"
+  ],
+  "/api/groups/my": [
+    "api.ts"
+  ],
+  "/api/auth/login": [
+    "api.ts"
+  ],
+  "/api/suggestions": [
+    "api.ts"
+  ],
+  "/api/options": [
+    "api.ts"
+  ],
+  "/api/topics/popular": [
+    "api.ts"
+  ],
+  "/api/groups": [
+    "api.ts"
+  ],
+  "/api/records": [
+    "api.ts"
+  ],
+  "/api/wallet/me": [
+    "api.ts"
+  ],
+  "/api/circles": [
+    "api.ts"
+  ],
+  "/api/stats": [
+    "api.ts"
+  ],
+  "/api/checkins": [
+    "api.ts"
+  ],
+  "/api/notifications/unread-count": [
+    "services/notificationApi.ts"
+  ],
+  "/api/notifications/read-all": [
+    "services/notificationApi.ts"
+  ],
+  "/api/admin/auth/logout": [
+    "services/adminApi.ts"
+  ],
+  "/api/admin/auth/me": [
+    "services/adminApi.ts"
+  ],
+  "/api/admin/guilds": [
+    "services/adminApi.ts"
+  ],
+  "/api/admin/dashboard/summary": [
+    "services/adminApi.ts"
+  ],
+  "/api/admin/safety/sensitive-words": [
+    "services/adminApi.ts"
+  ],
+  "/api/admin/auth/login": [
+    "services/adminApi.ts"
+  ],
+  "/api/admin/settings": [
+    "services/adminApi.ts"
+  ],
+  "/api/admin/groups": [
+    "services/adminApi.ts"
+  ],
+  "/api/admin/circles": [
+    "services/adminApi.ts"
+  ],
+  "/api/admin/safety/rules": [
+    "services/adminApi.ts"
+  ],
+  "/api/admin/safety": [
+    "services/adminApi.ts"
+  ],
+  "/api/admin/ai-prompts": [
+    "services/adminApi.ts"
+  ]
+}

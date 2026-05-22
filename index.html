@@ -1,0 +1,164 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>API 接口管理</title>
+  <link rel="stylesheet" href="/style.css">
+</head>
+<body>
+  <!-- 顶部导航栏 -->
+  <nav class="top-nav">
+    <div class="nav-brand">🔌 API 接口管理</div>
+    <div class="nav-tabs">
+      <div class="nav-tab active" onclick="switchTab('home')">首页</div>
+      <div class="nav-tab" onclick="switchTab('features')">功能</div>
+    </div>
+  </nav>
+
+  <!-- 首页 - 接口治理平台 -->
+  <div id="page-home" class="page active">
+    <div class="container">
+      <div class="page-header">
+        <h1>📊 接口治理平台</h1>
+        <div class="header-actions">
+          <div class="header-stats">
+            <span class="stat-badge total" id="totalCount">总计: 0</span>
+            <span class="stat-badge danger" id="highRiskCount">高风险: 0</span>
+            <span class="stat-badge warning" id="noFrontendCount">未接入前端: 0</span>
+          </div>
+          <button class="btn btn-primary" onclick="refreshRoutes()">🔄 刷新获取新增</button>
+          <button class="btn btn-secondary" onclick="openExportModal()">📄 Markdown</button>
+          <button class="btn btn-secondary" onclick="exportOpenAPI()">📋 OpenAPI</button>
+          <button class="btn btn-secondary" onclick="exportSelected()">📦 导出选中</button>
+        </div>
+      </div>
+
+      <!-- 健康度仪表盘 -->
+      <div class="health-dashboard" id="healthDashboard"></div>
+
+      <!-- 筛选器 -->
+      <div class="filters">
+        <div class="filter-group">
+          <label>请求方法</label>
+          <select id="filterMethod" onchange="renderList()">
+            <option value="">全部</option>
+            <option value="GET">GET</option>
+            <option value="POST">POST</option>
+            <option value="PATCH">PATCH</option>
+            <option value="PUT">PUT</option>
+            <option value="DELETE">DELETE</option>
+          </select>
+        </div>
+        <div class="filter-group">
+          <label>接口类型</label>
+          <select id="filterType" onchange="renderList()">
+            <option value="">全部</option>
+            <option value="public">公开</option>
+            <option value="authenticated">登录用户</option>
+            <option value="admin">管理员</option>
+          </select>
+        </div>
+        <div class="filter-group">
+          <label>风险等级</label>
+          <select id="filterRisk" onchange="renderList()">
+            <option value="">全部</option>
+            <option value="low">低风险</option>
+            <option value="medium">中风险</option>
+            <option value="high">高风险</option>
+          </select>
+        </div>
+        <div class="filter-group">
+          <label>特殊筛选</label>
+          <select id="filterSpecial" onchange="renderList()">
+            <option value="">全部</option>
+            <option value="no-frontend">⚠️ 未接入前端</option>
+            <option value="high-risk">🔴 高风险接口</option>
+            <option value="no-auth">❓ 缺少权限说明</option>
+            <option value="has-audit">📝 写审计日志</option>
+            <option value="changed">🔄 最近变更</option>
+          </select>
+        </div>
+        <div class="filter-group">
+          <label>搜索</label>
+          <input id="searchQuery" placeholder="搜索接口名称或路径..." oninput="renderList()" />
+        </div>
+      </div>
+
+      <!-- API 列表 -->
+      <div class="api-list">
+        <div class="list-header">
+          <span class="checkbox-col"><input type="checkbox" id="selectAll" onchange="toggleSelectAll()" /></span>
+          <span>方法</span>
+          <span>接口</span>
+          <span>路径</span>
+          <span>类型</span>
+          <span>风险</span>
+          <span>前端</span>
+          <span>数据库</span>
+          <span>操作</span>
+        </div>
+        <div id="apiList"></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- 功能页面 - 分类视图 -->
+  <div id="page-features" class="page">
+    <div class="container">
+      <div class="page-header">
+        <h1>🔌 API 接口管理</h1>
+        <div class="header-actions">
+          <div class="header-stats">
+            <span class="stat-badge total" id="totalCount2">总计: 0</span>
+            <span class="stat-badge public" id="publicCount">公开: 0</span>
+            <span class="stat-badge admin" id="adminCount">管理: 0</span>
+          </div>
+          <button class="btn btn-primary" onclick="refreshRoutes()">🔄 刷新获取新增</button>
+          <button class="btn btn-secondary" onclick="loadData()">🔄 同步数据</button>
+        </div>
+      </div>
+      <div class="category-grid" id="categoryGrid"></div>
+      <div id="coverageSection" style="margin-top:24px"></div>
+      <div style="margin-top:24px;padding:20px;background:white;border-radius:12px;border:1px solid #e5e7eb">
+        <h3 style="font-size:16px;font-weight:600;margin-bottom:16px">➕ 添加新模块</h3>
+        <div style="display:flex;gap:12px;flex-wrap:wrap;align-items:end">
+          <div class="filter-group">
+            <label>模块 Key</label>
+            <input id="newModuleKey" placeholder="如: payments" style="min-width:120px" />
+          </div>
+          <div class="filter-group">
+            <label>名称</label>
+            <input id="newModuleName" placeholder="如: 支付系统" style="min-width:120px" />
+          </div>
+          <div class="filter-group">
+            <label>图标 (emoji)</label>
+            <input id="newModuleIcon" placeholder="💳" style="min-width:60px" />
+          </div>
+          <div class="filter-group">
+            <label>描述</label>
+            <input id="newModuleDesc" placeholder="支付、退款、账单" style="min-width:200px" />
+          </div>
+          <button class="btn btn-primary" onclick="addModule()">添加</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- 详情弹窗 -->
+  <div id="detailModal" class="modal-overlay" style="display:none" onclick="if(event.target===this)closeModal()">
+    <div class="modal">
+      <div class="modal-header">
+        <h2>📋 API 详情</h2>
+        <button class="btn-close" onclick="closeModal()">✕</button>
+      </div>
+      <div class="modal-body" id="detailBody"></div>
+    </div>
+  </div>
+
+  <!-- Toast -->
+  <div id="toast" class="toast" style="display:none"></div>
+
+  <script src="/app.js"></script>
+</body>
+</html>
