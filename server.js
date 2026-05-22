@@ -226,7 +226,7 @@ const server = createServer(async (req, res) => {
     const result = await proxyRequest(m, targetPath, headers, requestBody); res.writeHead(200, {'Content-Type':'application/json'}); res.end(JSON.stringify(result)); return;
   }
   if (path.match(/^\/api\/registry\//) && ['PATCH','DELETE'].includes(method)) {
-    const routeId = decodeURIComponent(path.split('/').pop()); let routes = loadApiRegistry(); const idx = routes.findIndex(r => r.route_id === routeId);
+    const routeId = decodeURIComponent(path.split('/').pop()); let routes = loadApiRegistry(); const idx = routes.findIndex(r => (r.route_id || buildRouteId(r.method, r.path)) === routeId);
     if (idx < 0) { res.writeHead(404, {'Content-Type':'application/json'}); res.end(JSON.stringify({message:'API不存在'})); return; }
     if (method === 'DELETE') { const removed=routes.splice(idx,1)[0]; saveApiRegistry(routes); res.writeHead(200,{'Content-Type':'application/json'}); res.end(JSON.stringify({success:true,removed})); return; }
     const body = await parseBody(req); const allow = ['customDescription','tags','module','favorite','frontendStatus','accessOverride','riskOverride','reviewNote','deprecatedReason'];
