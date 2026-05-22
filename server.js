@@ -28,11 +28,6 @@ const YUWANG_BASE_URL = process.env.YUWANG_BASE_URL || 'http://localhost:3001';
 const API_MANAGER_SESSION_SECRET = process.env.API_MANAGER_SESSION_SECRET || '';
 const ADMIN_USERNAME = process.env.API_MANAGER_ADMIN_USERNAME || 'admin';
 const ADMIN_PASSWORD = process.env.API_MANAGER_ADMIN_PASSWORD || '';
-
-// 密码哈希比较
-function verifyPassword(input, hashed) {
-  return crypto.createHash("sha256").update(input).digest("hex") === hashed;
-}
 const sessions = new Map();
 
 function buildRouteId(method, path) { return `${method.toUpperCase()}:${path}`; }
@@ -79,6 +74,11 @@ function toGovernance(route) {
   };
 }
 
+// 密码哈希比较
+function verifyPassword(input, hashed) {
+  return crypto.createHash('sha256').update(input).digest('hex') === hashed;
+}
+
 function isAdmin(req) {
   const cookie = req.headers.cookie || '';
   const kv = Object.fromEntries(cookie.split(';').map(c => c.trim()).filter(Boolean).map(c => c.split('=')));
@@ -100,7 +100,7 @@ function saveApiRegistry(routes) {
 }
 async function parseBody(req) { return new Promise(resolve => { let b=''; req.on('data',c=>b+=c); req.on('end',()=>{ try{resolve(JSON.parse(b||'{}'));}catch{resolve({});}});}); }
 
-async function proxyRequest(method, path, headers, body) { /* same */
+async function proxyRequest(method, path, headers, body) {
   const url = `${YUWANG_BASE_URL}${path}`;
   const options = { method, headers: { 'Content-Type': 'application/json', ...headers } };
   if (body && ['POST', 'PUT', 'PATCH'].includes(method)) options.body = typeof body === 'string' ? body : JSON.stringify(body);
@@ -137,14 +137,25 @@ const server = createServer(async (req, res) => {
 
   if (path.startsWith('/api/') && !path.startsWith('/api/auth/') && !requireAdmin(req, res)) return;
 
-  if (path === '/api/registry' && method === 'GET') { res.writeHead(200,{'Content-Type':'application/json'}); res.end(JSON.stringify(loadApiRegistry())); return; }
+  if (path === '/api/registry' && method === 'GET') {
+    const routes = loadApiRegistry();
+    const routesWithId = routes.map(r => ({
+      ...r,
+      route_id: r.route_id || buildRouteId(r.method, r.path)
+    }));
+    res.writeHead(200, {'Content-Type':'application/json'});
+    res.end(JSON.stringify(routesWithId));
+    return;
+  }
   if (path === '/api/proxy' && method === 'POST') {
     const body = await parseBody(req); const { targetMethod, targetPath, headers, requestBody, dryRun=false } = body;
-    const routes = loadApiRegistry(); const route = routes.find(r => r.route_id === buildRouteId(targetMethod, targetPath));
+    const routes = loadApiRegistry().map(r => ({ ...r, route_id: r.route_id || buildRouteId(r.method, r.path) })); const route = routes.find(r => r.route_id === buildRouteId(targetMethod, targetPath));
     if (!route) { res.writeHead(400, {'Content-Type':'application/json'}); res.end(JSON.stringify({success:false,message:'route not found in registry'})); return; }
-    const m = targetMethod.toUpperCase(); const risk = route.riskOverride || route.detectedRisk;
+    const m = targetMethod.toUpperCase();
+    const risk = route.riskOverride || route.detectedRisk || route.riskLevel;
+    const auth = route.accessOverride || route.detectedAuth || route.authType;
     if (m === 'DELETE') { res.writeHead(403, {'Content-Type':'application/json'}); res.end(JSON.stringify({success:false,message:'DELETE real execution is blocked'})); return; }
-    if ((['POST','PATCH','PUT'].includes(m) && risk === 'high') || (route.accessOverride || route.detectedAuth) === 'admin') {
+    if ((['POST','PATCH','PUT'].includes(m) && risk === 'high') || auth === 'admin') {
       if (!dryRun) { res.writeHead(200, {'Content-Type':'application/json'}); res.end(JSON.stringify({success:true, blocked:true, message:'High-risk/admin API blocked from real execution. Use dryRun only.', route_id: route.route_id})); return; }
     }
     const result = await proxyRequest(m, targetPath, headers, requestBody); res.writeHead(200, {'Content-Type':'application/json'}); res.end(JSON.stringify(result)); return;
