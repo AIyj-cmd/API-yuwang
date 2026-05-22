@@ -632,25 +632,39 @@ async function toggleFavorite(index) {
 // ===== 刷新获取新增接口 =====
 async function refreshRoutes() {
   try {
-    const oldIds = new Set(allRoutes.map(r => `${r.method}:${r.path}`));
-    const res = await fetch('/api/registry');
-    if (!res.ok) throw new Error('获取失败');
-    
-    const data = await res.json();
-    const routes = Array.isArray(data) ? data : data.routes || [];
-    const newRoutes = routes.filter(r => !oldIds.has(`${r.method}:${r.path}`));
-    
-    allRoutes = routes;
-    localStorage.setItem('apiRegistry', JSON.stringify(routes));
-    
+    showToast('🔍 扫描 yuwang 源码中...');
+
+    // 1. 扫描 yuwang 代码
+    const scanRes = await fetch('/api/scan', { credentials: 'include' });
+    if (!scanRes.ok) throw new Error('扫描失败');
+    const scanData = await scanRes.json();
+
+    if (scanData.newCount > 0) {
+      // 2. 有新接口，合并到 registry
+      showToast(`🆕 发现 ${scanData.newCount} 个新接口，合并中...`);
+      const syncRes = await fetch('/api/sync-changes', {
+        credentials: 'include',
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ added: scanData.newRoutes })
+      });
+      if (!syncRes.ok) throw new Error('合并失败');
+    }
+
+    // 3. 重新加载 registry
+    const regRes = await fetch('/api/registry', { credentials: 'include' });
+    if (!regRes.ok) throw new Error('获取 registry 失败');
+    allRoutes = await regRes.json();
+    localStorage.setItem('apiRegistry', JSON.stringify(allRoutes));
+
     renderList();
     updateStats();
     renderDashboard();
-    
-    if (newRoutes.length > 0) {
-      showToast(`🆕 发现 ${newRoutes.length} 个新接口：${newRoutes.map(r => r.path).join(', ')}`);
+
+    if (scanData.newCount > 0) {
+      showToast(`🆕 已添加 ${scanData.newCount} 个新接口：${scanData.newRoutes.map(r => r.path).join(', ')}`);
     } else {
-      showToast('✅ 已是最新，无新增接口');
+      showToast(`✅ 已是最新，源码共 ${scanData.scanned} 个接口，无新增`);
     }
   } catch (err) {
     showToast('❌ 刷新失败: ' + err.message);

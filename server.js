@@ -1,5 +1,5 @@
 import { createServer } from 'http';
-import { readFileSync, writeFileSync, existsSync } from 'fs';
+import { readFileSync, writeFileSync, existsSync, readdirSync } from 'fs';
 import { join, dirname } from 'path';
 import { fileURLToPath } from 'url';
 import crypto from 'crypto';
@@ -134,7 +134,30 @@ async function proxyRequest(method, path, headers, body) {
   } catch (err) { return { status: 0, statusText: 'Error', headers: {}, body: { error: err.message }, time: 0 }; }
 }
 
-function scanApisFromCode() { return []; }
+function scanApisFromCode() {
+  const serverDir = YUWANG_SERVER_DIR;
+  if (!existsSync(serverDir)) return [];
+  const files = readdirSync(serverDir).filter(f => f.endsWith('.ts'));
+  const routes = [];
+  const routeRegex = /app\.(get|post|put|patch|delete)\(\s*['"`]([^'"`]+)['"`]/g;
+  for (const file of files) {
+    const filePath = join(serverDir, file);
+    const content = readFileSync(filePath, 'utf-8');
+    const lines = content.split('\n');
+    for (let i = 0; i < lines.length; i++) {
+      let match;
+      routeRegex.lastIndex = 0;
+      while ((match = routeRegex.exec(lines[i])) !== null) {
+        const method = match[1].toUpperCase();
+        const path = match[2];
+        if (path.startsWith('/api/')) {
+          routes.push({ method, path, file, line: i + 1 });
+        }
+      }
+    }
+  }
+  return routes;
+}
 function syncRegistry() { if (existsSync(YUWANG_REGISTRY_PATH)) { writeFileSync(join(__dirname,'api-registry.json'), readFileSync(YUWANG_REGISTRY_PATH,'utf-8')); return true; } return false; }
 
 const server = createServer(async (req, res) => {
@@ -203,6 +226,14 @@ const server = createServer(async (req, res) => {
     if (method === 'DELETE') { const removed=routes.splice(idx,1)[0]; saveApiRegistry(routes); res.writeHead(200,{'Content-Type':'application/json'}); res.end(JSON.stringify({success:true,removed})); return; }
     const body = await parseBody(req); const allow = ['customDescription','tags','module','favorite','frontendStatus','accessOverride','riskOverride','reviewNote','deprecatedReason'];
     allow.forEach(k=>{ if (body[k] !== undefined) routes[idx][k]=body[k];}); saveApiRegistry(routes); res.writeHead(200,{'Content-Type':'application/json'}); res.end(JSON.stringify({success:true,route:routes[idx]})); return;
+  }
+  if (path === '/api/scan' && method === 'GET') {
+    const scanned = scanApisFromCode();
+    const existing = new Set(loadApiRegistry().map(r => buildRouteId(r.method, r.path)));
+    const newRoutes = scanned.filter(r => !existing.has(buildRouteId(r.method, r.path)));
+    res.writeHead(200, {'Content-Type':'application/json'});
+    res.end(JSON.stringify({ success: true, scanned: scanned.length, newCount: newRoutes.length, newRoutes, all: scanned }));
+    return;
   }
   if (path === '/api/sync' && method === 'POST') {
     const synced = syncRegistry();
