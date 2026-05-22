@@ -144,7 +144,7 @@ const server = createServer(async (req, res) => {
     res.writeHead(200, {'Content-Type':'application/json'}); res.end(JSON.stringify({success:true})); return;
   }
 
-  if (path.startsWith('/api/') && !path.startsWith('/api/auth/') && !requireAdmin(req, res)) return;
+  if (path.startsWith('/api/') && !path.startsWith('/api/auth/') && !(path === '/api/modules' && method === 'GET') && !requireAdmin(req, res)) return;
 
   if (path === '/api/registry' && method === 'GET') {
     const routes = loadApiRegistry();
@@ -202,6 +202,28 @@ const server = createServer(async (req, res) => {
     }
     if (body.removed?.length) { const rm = new Set(body.removed.map(r => buildRouteId(r.method, r.path))); routes = routes.filter(r => !rm.has(r.route_id)); }
     saveApiRegistry(routes); res.writeHead(200, {'Content-Type':'application/json'}); res.end(JSON.stringify({success:true,count:routes.length})); return;
+  }
+
+  // 模块管理
+  const MODULES_JSON_PATH = join(__dirname, 'modules.json');
+  function loadCustomModules() { try { return JSON.parse(readFileSync(MODULES_JSON_PATH, 'utf-8')); } catch { return {}; } }
+  function saveCustomModules(mods) { writeFileSync(MODULES_JSON_PATH, JSON.stringify(mods, null, 2), 'utf-8'); }
+
+  if (path === '/api/modules' && method === 'GET') {
+    const merged = { ...MODULE_DEFINITIONS, ...loadCustomModules() };
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify(merged));
+    return;
+  }
+  if (path === '/api/modules' && method === 'POST') {
+    if (!requireAdmin(req, res)) return;
+    const body = await parseBody(req);
+    const custom = loadCustomModules();
+    Object.assign(custom, body);
+    saveCustomModules(custom);
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ success: true, modules: { ...MODULE_DEFINITIONS, ...custom } }));
+    return;
   }
 
   // 静态文件服务
