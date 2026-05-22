@@ -165,7 +165,7 @@ const server = createServer(async (req, res) => {
   res.setHeader('Access-Control-Allow-Origin', '*'); res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, PATCH, DELETE, OPTIONS'); res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
   if (method === 'OPTIONS') { res.writeHead(204); res.end(); return; }
 
-  if (path === '/api/auth/login' && method === 'POST') {
+  if (path === '/api/manager/auth/login' && method === 'POST') {
     if (!API_MANAGER_SESSION_SECRET || !ADMIN_PASSWORD) { res.writeHead(500, {'Content-Type':'application/json'}); res.end(JSON.stringify({success:false,message:'Missing auth env config'})); return; }
     const body = await parseBody(req);
     if (body.username === ADMIN_USERNAME && verifyPassword(body.password, ADMIN_PASSWORD)) {
@@ -176,14 +176,14 @@ const server = createServer(async (req, res) => {
     }
     res.writeHead(401, {'Content-Type':'application/json'}); res.end(JSON.stringify({success:false,message:'invalid credentials'})); return;
   }
-  if (path === '/api/auth/logout' && method === 'POST') {
+  if (path === '/api/manager/auth/logout' && method === 'POST') {
     const cookie = req.headers.cookie || ''; const kv = Object.fromEntries(cookie.split(';').map(c => c.trim()).filter(Boolean).map(c => c.split('=')));
     if (kv.api_manager_session) sessions.delete(kv.api_manager_session);
     res.setHeader('Set-Cookie', 'api_manager_session=; HttpOnly; Path=/; Max-Age=0; SameSite=Lax');
     res.writeHead(200, {'Content-Type':'application/json'}); res.end(JSON.stringify({success:true})); return;
   }
 
-  if (path.startsWith('/api/') && !path.startsWith('/api/auth/') && !(path === '/api/modules' && method === 'GET') && !requireAdmin(req, res)) return;
+  if (path.startsWith('/api/') && !path.startsWith('/api/manager/auth/') && !(path === '/api/modules' && method === 'GET') && !requireAdmin(req, res)) return;
 
   if (path === '/api/registry' && method === 'GET') {
     const routes = loadApiRegistry();

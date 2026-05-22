@@ -119,8 +119,8 @@ server {
 | 端点 | 方法 | 认证 | 说明 |
 |------|------|------|------|
 | `/` | GET | 无 | 前端页面 |
-| `/api/auth/login` | POST | 无 | 管理员登录 |
-| `/api/auth/logout` | POST | 无 | 登出 |
+| `/api/manager/auth/login` | POST | 无 | 管理员登录 |
+| `/api/manager/auth/logout` | POST | 无 | 登出 |
 | `/api/registry` | GET | 管理员 | 获取所有接口数据 |
 | `/api/modules` | GET | 无 | 获取模块配置（内置 + 自定义） |
 | `/api/modules` | POST | 管理员 | 添加自定义模块 |
