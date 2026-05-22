@@ -203,19 +203,24 @@ const server = createServer(async (req, res) => {
     const risk = route.riskOverride || route.detectedRisk || route.riskLevel;
     const auth = route.accessOverride || route.detectedAuth || route.authType;
     if (m === 'DELETE') { res.writeHead(403, {'Content-Type':'application/json'}); res.end(JSON.stringify({success:false,message:'DELETE real execution is blocked'})); return; }
-    if ((['POST','PATCH','PUT'].includes(m) && risk === 'high') || auth === 'admin') {
-      if (!dryRun) { res.writeHead(200, {'Content-Type':'application/json'}); res.end(JSON.stringify({success:true, blocked:true, message:'High-risk/admin API blocked from real execution. Use dryRun only.', route_id: route.route_id})); return; }
-      // dryRun=true 时返回模拟响应，不真实请求
+    // dryRun=true 一律模拟，不真实请求
+    if (dryRun) {
       res.writeHead(200, {'Content-Type':'application/json'});
       res.end(JSON.stringify({
         success: true,
         dryRun: true,
         message: `[DRY RUN] ${m} ${targetPath} - 请求已模拟，未真实执行`,
         route_id: route.route_id,
-        risk: risk,
-        auth: auth,
+        risk,
+        auth,
         simulatedResponse: { status: 200, message: '模拟响应' }
       }));
+      return;
+    }
+    // 高风险/admin 且没传 dryRun → 拒绝真实执行
+    if ((['POST','PATCH','PUT'].includes(m) && risk === 'high') || auth === 'admin') {
+      res.writeHead(200, {'Content-Type':'application/json'});
+      res.end(JSON.stringify({success:true, blocked:true, message:'High-risk/admin API requires dryRun:true', route_id: route.route_id}));
       return;
     }
     const result = await proxyRequest(m, targetPath, headers, requestBody); res.writeHead(200, {'Content-Type':'application/json'}); res.end(JSON.stringify(result)); return;
