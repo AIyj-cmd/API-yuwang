@@ -1,3 +1,70 @@
+// ===== 登录逻辑 =====
+async function checkAuth() {
+  try {
+    const res = await fetch('/api/registry');
+    if (res.status === 401) {
+      showLoginPage();
+      return false;
+    }
+    return true;
+  } catch {
+    showLoginPage();
+    return false;
+  }
+}
+
+function showLoginPage() {
+  document.getElementById('login-page').style.display = 'flex';
+  document.getElementById('main-content').style.display = 'none';
+}
+
+function hideLoginPage() {
+  document.getElementById('login-page').style.display = 'none';
+  document.getElementById('main-content').style.display = 'block';
+}
+
+async function doLogin() {
+  const username = document.getElementById('login-username').value;
+  const password = document.getElementById('login-password').value;
+  const errorEl = document.getElementById('login-error');
+  
+  if (!username || !password) {
+    errorEl.textContent = '请输入用户名和密码';
+    errorEl.style.display = 'block';
+    return;
+  }
+  
+  try {
+    const res = await fetch('/api/auth/login', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ username, password })
+    });
+    
+    const data = await res.json();
+    
+    if (data.success) {
+      hideLoginPage();
+      loadData();
+    } else {
+      errorEl.textContent = data.message || '登录失败';
+      errorEl.style.display = 'block';
+    }
+  } catch (err) {
+    errorEl.textContent = '网络错误';
+    errorEl.style.display = 'block';
+  }
+}
+
+// 回车键登录
+document.addEventListener('DOMContentLoaded', () => {
+  const passwordInput = document.getElementById('login-password');
+  if (passwordInput) {
+    passwordInput.addEventListener('keypress', (e) => {
+      if (e.key === 'Enter') doLogin();
+    });
+  }
+});
 // ===== 状态 =====
 let allRoutes = [];
 let currentTab = 'home';
@@ -698,4 +765,4 @@ function showToast(message) {
 }
 
 // ===== 初始化 =====
-loadData();
+checkAuth().then(ok => { if (ok) loadData(); });
