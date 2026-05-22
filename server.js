@@ -204,6 +204,20 @@ const server = createServer(async (req, res) => {
     saveApiRegistry(routes); res.writeHead(200, {'Content-Type':'application/json'}); res.end(JSON.stringify({success:true,count:routes.length})); return;
   }
 
+  // 静态文件服务
+  const STATIC_FILES = { '/': 'index.html', '/index.html': 'index.html', '/app.js': 'app.js', '/style.css': 'style.css' };
+  const MIME_TYPES = { '.html': 'text/html; charset=utf-8', '.js': 'application/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8' };
+  const staticFile = STATIC_FILES[path];
+  if (staticFile && method === 'GET') {
+    const filePath = join(__dirname, staticFile);
+    if (existsSync(filePath)) {
+      const ext = staticFile.slice(staticFile.lastIndexOf('.'));
+      res.writeHead(200, { 'Content-Type': MIME_TYPES[ext] || 'application/octet-stream' });
+      res.end(readFileSync(filePath));
+      return;
+    }
+  }
+
   res.writeHead(404, {'Content-Type':'application/json'}); res.end(JSON.stringify({ message: 'Not Found' }));
 });
 
