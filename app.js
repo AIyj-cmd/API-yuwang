@@ -381,7 +381,7 @@ function viewDetail(index) {
     ${renderDetailField('审计日志', route.hasAuditLog ? '✅ 写审计日志' : '❌ 不写审计日志')}
     <div class="detail-row">
       <label>自定义描述</label>
-      <textarea id="detailDesc" placeholder="添加接口描述..." onblur="updateDesc(${index}, this.value)">${route.description || ''}</textarea>
+      <textarea id="detailDesc" placeholder="添加接口描述..." onblur="updateDesc(${index}, this.value)">${route.customDescription || ''}</textarea>
     </div>
     <div class="detail-row">
       <label>标签</label>
@@ -453,12 +453,20 @@ async function sendTestRequest(index) {
       }
     }
 
-    const res = await fetch(`http://localhost:3001${route.path}`, options);
+    const proxyRes = await fetch('/api/proxy', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        targetMethod: route.method,
+        targetPath: route.path,
+        requestBody: options.body ? JSON.parse(options.body) : undefined
+      })
+    });
     const elapsed = Date.now() - startTime;
-    const data = await res.json();
+    const data = await proxyRes.json();
 
-    statusEl.textContent = `${res.status} ${res.statusText} · ${elapsed}ms`;
-    statusEl.style.color = res.ok ? '#10b981' : '#ef4444';
+    statusEl.textContent = `${proxyRes.status} ${proxyRes.statusText} · ${elapsed}ms`;
+    statusEl.style.color = proxyRes.ok ? '#10b981' : '#ef4444';
     responseEl.textContent = JSON.stringify(data, null, 2);
     resultEl.style.display = 'block';
   } catch (err) {
@@ -473,12 +481,12 @@ async function sendTestRequest(index) {
 // ===== 数据操作 =====
 async function updateDesc(index, desc) {
   try {
-    await fetch(`/api/registry/${index}`, {
+    await fetch(`/api/registry/${encodeURIComponent(allRoutes[index].route_id)}`, {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ description: desc })
+      body: JSON.stringify({ customDescription: desc })
     });
-    allRoutes[index].description = desc;
+    allRoutes[index].customDescription = desc;
     showToast('描述已更新');
   } catch (err) { console.error('更新失败:', err); }
 }
@@ -490,7 +498,7 @@ async function addTag(index) {
   if (!allRoutes[index].tags) allRoutes[index].tags = [];
   allRoutes[index].tags.push(tag);
   input.value = '';
-  await fetch(`/api/registry/${index}`, {
+  await fetch(`/api/registry/${encodeURIComponent(allRoutes[index].route_id)}`, {
     method: 'PATCH',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ tags: allRoutes[index].tags })
@@ -501,7 +509,7 @@ async function addTag(index) {
 
 async function removeTag(index, tagIndex) {
   allRoutes[index].tags.splice(tagIndex, 1);
-  await fetch(`/api/registry/${index}`, {
+  await fetch(`/api/registry/${encodeURIComponent(allRoutes[index].route_id)}`, {
     method: 'PATCH',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ tags: allRoutes[index].tags })
@@ -511,7 +519,7 @@ async function removeTag(index, tagIndex) {
 
 async function toggleFavorite(index) {
   const newValue = !allRoutes[index].favorite;
-  await fetch(`/api/registry/${index}`, {
+  await fetch(`/api/registry/${encodeURIComponent(allRoutes[index].route_id)}`, {
     method: 'PATCH',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ favorite: newValue })
