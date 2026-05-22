@@ -51,6 +51,22 @@ function toGovernance(route) {
   const path = route.path;
   const detectedAuth = classifyDetectedAuth(method, path);
   const detectedRisk = classifyDetectedRisk(method, path);
+
+  // 特殊路径强制覆盖，不信任旧值
+  const FORCED_OVERRIDES = {
+    '/api/auth/login':    { auth: 'anonymous', risk: 'medium' },
+    '/api/auth/register': { auth: 'anonymous', risk: 'medium' },
+    '/api/auth/logout':   { auth: 'anonymous', risk: 'low' },
+    '/api/health':        { auth: 'anonymous', risk: 'low' },
+  };
+  const forced = FORCED_OVERRIDES[path];
+  const finalAuth = forced ? forced.auth : (route.accessOverride || detectedAuth);
+  const finalRisk = forced ? forced.risk : (route.riskOverride || detectedRisk);
+
+  // apiType 映射：前端 typeLabels 只认 public / authenticated / admin
+  const apiTypeMap = { admin: 'admin', user: 'authenticated', anonymous: 'public' };
+  const apiType = apiTypeMap[finalAuth] || 'public';
+
   return {
     route_id: buildRouteId(method, path),
     method,
@@ -60,10 +76,10 @@ function toGovernance(route) {
     line: route.line || 0,
     module: route.module || getModule(path),
     autoDescription: route.autoDescription || getAutoDescription(method, path),
-    // 保留原始字段（前端使用）
-    apiType: route.apiType || detectedAuth,
-    authType: route.authType || detectedAuth,
-    riskLevel: route.riskLevel || detectedRisk,
+    // 旧字段（前端使用），统一走映射
+    apiType,
+    authType: finalAuth,
+    riskLevel: finalRisk,
     status: route.status || 'implemented',
     // 新字段
     detectedAuth,
