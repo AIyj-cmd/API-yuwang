@@ -158,7 +158,7 @@ function scanApisFromCode() {
   }
   return routes;
 }
-function syncRegistry() { if (existsSync(YUWANG_REGISTRY_PATH)) { writeFileSync(join(__dirname,'api-registry.json'), readFileSync(YUWANG_REGISTRY_PATH,'utf-8')); return true; } return false; }
+function syncRegistry() { /* deprecated, kept for compat */ return false; }
 
 const server = createServer(async (req, res) => {
   const url = new URL(req.url, `http://localhost:${PORT}`); const path = url.pathname; const method = req.method;
@@ -241,9 +241,21 @@ const server = createServer(async (req, res) => {
     return;
   }
   if (path === '/api/sync' && method === 'POST') {
-    const synced = syncRegistry();
-    const merged = loadApiRegistry().map(toGovernance); saveApiRegistry(merged);
-    res.writeHead(200, {'Content-Type':'application/json'}); res.end(JSON.stringify({success:true,count:merged.length,synced})); return;
+    // 扫描 yuwang 源码 → governance → 合并旧人工字段 → 写入 api-registry-analyzed.json
+    const scanned = scanApisFromCode();
+    const oldRoutes = loadApiRegistry();
+    const oldMap = new Map(oldRoutes.map(r => [r.route_id || buildRouteId(r.method, r.path), r]));
+    const KEEP_FIELDS = ['customDescription','tags','module','favorite','frontendStatus','accessOverride','riskOverride','reviewNote','deprecatedReason','description','dbTables','hasAuditLog','frontendUsage'];
+    const merged = scanned.map(raw => {
+      const gov = toGovernance(raw);
+      const old = oldMap.get(gov.route_id);
+      if (old) { KEEP_FIELDS.forEach(k => { if (old[k] !== undefined && old[k] !== null) gov[k] = old[k]; }); }
+      return gov;
+    });
+    saveApiRegistry(merged);
+    res.writeHead(200, {'Content-Type':'application/json'});
+    res.end(JSON.stringify({ success: true, count: merged.length, scanned: scanned.length, preserved: oldMap.size }));
+    return;
   }
   if (path === '/api/sync-changes' && method === 'POST') {
     const body = await parseBody(req); let routes = loadApiRegistry(); const existing = new Map(routes.map(r=>[r.route_id,r]));
