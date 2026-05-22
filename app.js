@@ -75,6 +75,14 @@ const methodEmoji = { GET: '📥', POST: '📤', PATCH: '✏️', PUT: '📝', D
 const typeLabels = { public: '🌐 公开', authenticated: '🔑 登录用户', admin: '👑 管理员' };
 const riskLabels = { low: '🟢 低', medium: '🟡 中', high: '🔴 高' };
 const statusLabels = { implemented: '✅ 已实现', planned: '📋 规划中', deprecated: '🚫 废弃', refactor: '🔧 需重构' };
+const frontendStatusLabels = {
+  connected:    { label: '已接入',   icon: '✅', cls: 'fs-connected' },
+  needs_review: { label: '待审核',   icon: '❓', cls: 'fs-needs-review' },
+  admin_only:   { label: '仅后台',   icon: '👑', cls: 'fs-admin-only' },
+  internal:     { label: '内部使用', icon: '⚙️', cls: 'fs-internal' },
+  planned:      { label: '规划中',   icon: '📋', cls: 'fs-planned' },
+  deprecated:   { label: '不接入',   icon: '🚫', cls: 'fs-deprecated' },
+};
 
 // 模块定义 - 从服务器加载，支持自定义扩展
 let MODULE_MAP = {
@@ -203,21 +211,37 @@ function renderDashboard() {
     noFrontend: allRoutes.filter(r => r.frontendUsage.length === 0).length,
     hasAudit: allRoutes.filter(r => r.hasAuditLog).length
   };
+  // 未接入原因分组（仅统计实际未被前端调用的接口）
+  const reasonCounts = {};
+  allRoutes.filter(r => r.frontendUsage.length === 0).forEach(r => {
+    const s = r.frontendStatus || 'needs_review';
+    reasonCounts[s] = (reasonCounts[s] || 0) + 1;
+  });
+  const reasonOrder = ['needs_review', 'admin_only', 'internal', 'planned', 'deprecated'];
+  const reasonHtml = reasonOrder
+    .filter(k => reasonCounts[k])
+    .map(k => {
+      const fs = frontendStatusLabels[k] || frontendStatusLabels.needs_review;
+      return `<span class="reason-chip ${fs.cls}" onclick="quickFilter('fs:${k}')">${fs.icon} ${fs.label} ${reasonCounts[k]}</span>`;
+    }).join('');
+
   document.getElementById('healthDashboard').innerHTML = `
-    <div class="health-card info">
+    <div class="health-card info" onclick="quickFilter('')">
       <div class="icon">📊</div>
       <div class="value">${stats.total}</div>
       <div class="label">总接口数</div>
     </div>
-    <div class="health-card danger">
+    <div class="health-card danger" onclick="quickFilter('high-risk')">
       <div class="icon">🔴</div>
       <div class="value">${stats.highRisk}</div>
       <div class="label">高风险接口</div>
+      <div class="card-hint">点击筛选</div>
     </div>
     <div class="health-card warning">
       <div class="icon">⚠️</div>
       <div class="value">${stats.noFrontend}</div>
       <div class="label">未接入前端</div>
+      <div class="reason-chips">${reasonHtml}</div>
     </div>
     <div class="health-card success">
       <div class="icon">📝</div>
@@ -258,6 +282,7 @@ function filterRoutes() {
     if (specialFilter === 'no-auth' && route.authType !== 'anonymous') return false;
     if (specialFilter === 'has-audit' && !route.hasAuditLog) return false;
     if (specialFilter === 'changed' && !changeMap[routeKey(route)]) return false;
+    if (specialFilter && specialFilter.startsWith('fs:') && route.frontendStatus !== specialFilter.slice(3)) return false;
     if (currentModuleFilter && route.module !== currentModuleFilter) return false;
     if (search && !route.name.toLowerCase().includes(search) && !route.path.toLowerCase().includes(search)) return false;
     return true;
@@ -271,9 +296,8 @@ function renderApiRow(route, idx) {
     : change === 'modified' ? '<span class="change-badge modified">✏️ 变更</span>'
     : '';
 
-  const frontendHtml = route.frontendUsage.length > 0
-    ? `<span class="frontend-info has">✅ ${route.frontendUsage[0]}</span>`
-    : `<span class="frontend-info none">❌ 未接入</span>`;
+  const fs = frontendStatusLabels[route.frontendStatus] || frontendStatusLabels.needs_review;
+  const frontendHtml = `<span class="frontend-status ${fs.cls}">${fs.icon} ${fs.label}</span>`;
   const dbHtml = route.dbTables.length > 0
     ? `<span class="db-tables">${route.dbTables.join(', ')}</span>`
     : `<span style="color:#9ca3af;font-size:11px">-</span>`;
@@ -332,57 +356,126 @@ function renderCategoryCard(key, data, mod) {
 }
 
 // ===== 渲染：覆盖率统计 =====
+const INTERNAL_PATHS = ['/api/health', '/api/scan', '/api/sync', '/api/proxy', '/api/sync-changes'];
+function isInternalPath(path) {
+  return INTERNAL_PATHS.some(p => path === p || path.startsWith(p + '/'));
+}
+function shouldConnectFrontend(route) {
+  if (route.frontendStatus === 'admin_only' || route.frontendStatus === 'internal' ||
+      route.frontendStatus === 'deprecated' || route.frontendStatus === 'needs_review') return false;
+  if (route.path.startsWith('/api/admin/')) return false;
+  if (isInternalPath(route.path)) return false;
+  return true;
+}
+function isBackendApi(route) {
+  return route.path.startsWith('/api/admin/') || route.frontendStatus === 'admin_only';
+}
+function pctColor(pct) { return pct >= 80 ? '#10b981' : pct >= 50 ? '#f59e0b' : '#ef4444'; }
+function pctBar(pct) {
+  return `<div style="height:8px;background:#e5e7eb;border-radius:4px;overflow:hidden"><div style="height:100%;width:${pct}%;background:${pctColor(pct)};border-radius:4px;transition:width 0.3s"></div></div>`;
+}
+function rateCard(label, numerator, denominator, icon) {
+  if (denominator === 0) {
+    return `<div style="flex:1;min-width:180px;padding:16px;background:#f9fafb;border-radius:10px;text-align:center">
+      <div style="font-size:24px;margin-bottom:4px">${icon}</div>
+      <div style="font-size:16px;font-weight:600;color:#9ca3af;margin-top:8px">暂无待接接口</div>
+      <div style="font-size:11px;color:#9ca3af;margin-top:4px">待分类后计算</div>
+    </div>`;
+  }
+  const pct = Math.round((numerator / denominator) * 100);
+  return `<div style="flex:1;min-width:180px;padding:16px;background:#f9fafb;border-radius:10px;text-align:center">
+    <div style="font-size:24px;margin-bottom:4px">${icon}</div>
+    <div style="font-size:28px;font-weight:700;color:${pctColor(pct)}">${pct}%</div>
+    <div style="font-size:12px;color:#6b7280;margin-bottom:6px">${label}</div>
+    <div style="font-size:11px;color:#9ca3af">${numerator} / ${denominator}</div>
+    ${pctBar(pct)}
+  </div>`;
+}
+
 function renderCoverage() {
   const section = document.getElementById('coverageSection');
   if (!section) return;
 
-  const used = allRoutes.filter(r => r.frontendUsage.length > 0);
-  const unused = allRoutes.filter(r => r.frontendUsage.length === 0);
-  const pct = Math.round((used.length / allRoutes.length) * 100);
+  // 全部接口调用率
+  const allUsed = allRoutes.filter(r => r.frontendUsage.length > 0);
 
-  // 按模块分组未使用的接口
-  const byModule = {};
+  // 前台接入率：只算"应该接入前台"的接口
+  const feRoutes = allRoutes.filter(r => shouldConnectFrontend(r));
+  const feUsed = feRoutes.filter(r => r.frontendUsage.length > 0);
+
+  // 后台接入率：只算 /api/admin/ 或 admin_only 的接口
+  const beRoutes = allRoutes.filter(r => isBackendApi(r));
+  const beUsed = beRoutes.filter(r => r.frontendUsage.length > 0);
+
+  // 待审核：未接入且标记为 needs_review
+  const pendingReview = allRoutes.filter(r => r.frontendUsage.length === 0 && r.frontendStatus === 'needs_review');
+
+  // 未接入前台（仅"应该接入前台"但没有被调用的）
+  const feMissing = feRoutes.filter(r => r.frontendUsage.length === 0);
+
+  // 按 frontendStatus 分组展示全部未接入（排除已接入的）
+  const groupOrder = ['needs_review', 'admin_only', 'internal', 'planned', 'deprecated', 'connected'];
+  const groupLabels = {
+    needs_review: { label: '待审核', icon: '❓', color: '#f59e0b' },
+    admin_only:   { label: '仅后台', icon: '👑', color: '#3b82f6' },
+    internal:     { label: '内部接口', icon: '⚙️', color: '#6b7280' },
+    planned:      { label: '未来计划', icon: '📋', color: '#8b5cf6' },
+    deprecated:   { label: '准备废弃', icon: '🚫', color: '#ef4444' },
+    connected:    { label: '已接入', icon: '✅', color: '#10b981' },
+  };
+
+  // 分组：未接入的接口（frontendUsage.length === 0），按 frontendStatus 分
+  const unused = allRoutes.filter(r => r.frontendUsage.length === 0);
+  const byStatus = {};
   unused.forEach(r => {
-    const mod = r.module || 'other';
-    if (!byModule[mod]) byModule[mod] = [];
-    byModule[mod].push(r);
+    const s = r.frontendStatus || 'needs_review';
+    if (!byStatus[s]) byStatus[s] = [];
+    byStatus[s].push(r);
   });
 
-  const moduleRows = Object.entries(byModule)
-    .sort((a, b) => b[1].length - a[1].length)
-    .map(([key, routes]) => {
-      const mod = MODULE_MAP[key] || MODULE_MAP['other'];
-      return `<div style="display:flex;align-items:center;gap:8px;padding:8px 0;border-bottom:1px solid #f3f4f6">
-        <span style="font-size:20px">${mod.icon}</span>
-        <span style="flex:1;font-size:13px;font-weight:500">${mod.name}</span>
-        <span style="font-size:13px;color:#ef4444;font-weight:600">${routes.length} 个未接入</span>
+  const groupHtml = groupOrder
+    .filter(k => byStatus[k] && byStatus[k].length > 0)
+    .map(k => {
+      const routes = byStatus[k];
+      const g = groupLabels[k] || groupLabels.needs_review;
+      return `<div style="margin-bottom:12px">
+        <div style="display:flex;align-items:center;gap:8px;padding:10px 12px;background:#f9fafb;border-radius:8px;cursor:pointer" onclick="quickFilter('fs:${k}')">
+          <span style="font-size:20px">${g.icon}</span>
+          <span style="flex:1;font-size:14px;font-weight:600">${g.label}</span>
+          <span style="font-size:13px;color:${g.color};font-weight:600">${routes.length} 个</span>
+        </div>
+        <div style="padding:4px 12px">
+          ${routes.slice(0, 5).map(r => `<div style="font-size:12px;color:#6b7280;padding:3px 0;font-family:monospace">${r.method} ${r.path}</div>`).join('')}
+          ${routes.length > 5 ? `<div style="font-size:11px;color:#9ca3af;padding:3px 0;cursor:pointer" onclick="quickFilter('fs:${k}')">...还有 ${routes.length - 5} 个，点击查看</div>` : ''}
+        </div>
       </div>`;
     }).join('');
 
   section.innerHTML = `
     <div style="background:white;border-radius:12px;padding:20px;border:1px solid #e5e7eb">
-      <h3 style="font-size:16px;font-weight:600;margin-bottom:16px">📊 前端覆盖率</h3>
-      <div style="display:flex;gap:24px;align-items:center;margin-bottom:16px">
-        <div style="flex:1">
-          <div style="display:flex;justify-content:space-between;margin-bottom:6px">
-            <span style="font-size:13px;color:#6b7280">已接入 ${used.length} / 总计 ${allRoutes.length}</span>
-            <span style="font-size:14px;font-weight:600;color:${pct >= 80 ? '#10b981' : pct >= 50 ? '#f59e0b' : '#ef4444'}">${pct}%</span>
-          </div>
-          <div style="height:12px;background:#e5e7eb;border-radius:6px;overflow:hidden">
-            <div style="height:100%;width:${pct}%;background:${pct >= 80 ? '#10b981' : pct >= 50 ? '#f59e0b' : '#ef4444'};border-radius:6px;transition:width 0.3s"></div>
-          </div>
-        </div>
-        <div style="text-align:center">
-          <div style="font-size:32px;font-weight:700;color:${pct >= 80 ? '#10b981' : pct >= 50 ? '#f59e0b' : '#ef4444'}">${pct}%</div>
-          <div style="font-size:11px;color:#9ca3af">覆盖率</div>
+      <h3 style="font-size:16px;font-weight:600;margin-bottom:16px">📊 接入率统计</h3>
+      <div style="display:flex;gap:12px;flex-wrap:wrap;margin-bottom:20px">
+        ${rateCard('全部接口调用率', allUsed.length, allRoutes.length, '📊')}
+        ${rateCard('前台接入率', feUsed.length, feRoutes.length, '🖥️')}
+        ${rateCard('后台接入率', beUsed.length, beRoutes.length, '🔧')}
+        <div style="flex:1;min-width:180px;padding:16px;background:#fef3c7;border-radius:10px;text-align:center">
+          <div style="font-size:24px;margin-bottom:4px">❓</div>
+          <div style="font-size:28px;font-weight:700;color:#92400e">${pendingReview.length}</div>
+          <div style="font-size:12px;color:#6b7280">待审核接口</div>
+          <div style="font-size:11px;color:#9ca3af;margin-top:4px">不计入任何接入率</div>
         </div>
       </div>
+      ${feMissing.length > 0 ? `
+      <div style="padding:12px 16px;background:#fef2f2;border-radius:8px;margin-bottom:16px;border:1px solid #fecaca">
+        <span style="font-size:13px;font-weight:600;color:#991b1b">⚠️ 真正需要前台接入但未接入：${feMissing.length} 个</span>
+        <span style="font-size:12px;color:#b91c1c;margin-left:8px">（前台接入率的缺口）</span>
+      </div>` : ''}
       ${unused.length > 0 ? `
       <div style="margin-top:16px">
-        <div style="font-size:13px;font-weight:600;color:#374151;margin-bottom:8px">⚠️ 未接入前端的接口 (${unused.length})</div>
-        <div style="max-height:200px;overflow-y:auto">${moduleRows}</div>
+        <div style="font-size:13px;font-weight:600;color:#374151;margin-bottom:8px">📋 未接入接口按状态分组 (${unused.length})</div>
+        <div style="max-height:400px;overflow-y:auto">${groupHtml}</div>
       </div>
-      ` : '<div style="text-align:center;padding:20px;color:#10b981">✅ 所有接口已接入前端</div>'}
+      ` : '<div style="text-align:center;padding:20px;color:#10b981">✅ 所有接口已接入</div>'}
     </div>
   `;
 }
@@ -427,6 +520,13 @@ function filterByModule(module) {
   renderList();
 }
 
+// ===== 快捷筛选 =====
+function quickFilter(value) {
+  document.getElementById('filterSpecial').value = value;
+  switchTab('home');
+  renderList();
+}
+
 // ===== 渲染：详情弹窗 =====
 function viewDetail(index) {
   const route = allRoutes[index];
@@ -441,6 +541,12 @@ function viewDetail(index) {
       ${renderDetailField('🔐 权限要求', `<span class="type-badge ${route.authType === 'admin' ? 'admin' : route.authType === 'user' ? 'authenticated' : 'public'}">${route.authType === 'admin' ? '👑 管理员' : route.authType === 'user' ? '🔑 登录用户' : '🌐 匿名'}</span>`)}
       ${renderDetailField('风险等级', `<span class="risk-badge ${route.riskLevel}">${riskLabels[route.riskLevel]}</span>`)}
       ${renderDetailField('状态', statusLabels[route.status] || route.status)}
+      <div class="detail-row">
+        <label>前端接入状态</label>
+        <select id="detailFrontendStatus" onchange="updateFrontendStatus(${index}, this.value)" style="padding:8px 12px;border:1px solid #d1d5db;border-radius:8px;font-size:14px;">
+          ${Object.entries(frontendStatusLabels).map(([k, v]) => `<option value="${k}" ${route.frontendStatus === k ? 'selected' : ''}>${v.icon} ${v.label}</option>`).join('')}
+        </select>
+      </div>
       ${renderDetailField('📁 源文件', `${route.file}:${route.line}`)}
     </div>
     ${renderDetailField('前端使用位置', route.frontendUsage.length > 0 ? '✅ ' + route.frontendUsage.join(', ') : '⚠️ 未接入前端')}
@@ -627,6 +733,20 @@ async function toggleFavorite(index) {
   allRoutes[index].favorite = newValue;
   renderList();
   showToast(newValue ? '已收藏' : '已取消收藏');
+}
+
+async function updateFrontendStatus(index, value) {
+  await fetch(`/api/registry/${encodeURIComponent(allRoutes[index].route_id)}`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ frontendStatus: value })
+  });
+  allRoutes[index].frontendStatus = value;
+  const fs = frontendStatusLabels[value];
+  renderList();
+  updateStats();
+  renderDashboard();
+  showToast(`前端状态已更新为 ${fs.icon} ${fs.label}`);
 }
 
 // ===== 刷新获取新增接口 =====
