@@ -28,6 +28,11 @@ const YUWANG_BASE_URL = process.env.YUWANG_BASE_URL || 'http://localhost:3001';
 const API_MANAGER_SESSION_SECRET = process.env.API_MANAGER_SESSION_SECRET || '';
 const ADMIN_USERNAME = process.env.API_MANAGER_ADMIN_USERNAME || 'admin';
 const ADMIN_PASSWORD = process.env.API_MANAGER_ADMIN_PASSWORD || '';
+
+// 密码哈希比较
+function verifyPassword(input, hashed) {
+  return crypto.createHash("sha256").update(input).digest("hex") === hashed;
+}
 const sessions = new Map();
 
 function buildRouteId(method, path) { return `${method.toUpperCase()}:${path}`; }
@@ -115,7 +120,7 @@ const server = createServer(async (req, res) => {
   if (path === '/api/auth/login' && method === 'POST') {
     if (!API_MANAGER_SESSION_SECRET || !ADMIN_PASSWORD) { res.writeHead(500, {'Content-Type':'application/json'}); res.end(JSON.stringify({success:false,message:'Missing auth env config'})); return; }
     const body = await parseBody(req);
-    if (body.username === ADMIN_USERNAME && body.password === ADMIN_PASSWORD) {
+    if (body.username === ADMIN_USERNAME && verifyPassword(body.password, ADMIN_PASSWORD)) {
       const token = crypto.createHmac('sha256', API_MANAGER_SESSION_SECRET).update(`${Date.now()}-${Math.random()}`).digest('hex');
       sessions.set(token, { createdAt: Date.now() });
       res.setHeader('Set-Cookie', `api_manager_session=${token}; HttpOnly; Path=/; Max-Age=28800; SameSite=Lax`);
