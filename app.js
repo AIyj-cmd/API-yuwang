@@ -521,6 +521,7 @@ async function sendTestRequest(index) {
     }
 
     const proxyRes = await fetch('/api/proxy', {
+      credentials: 'include',
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
