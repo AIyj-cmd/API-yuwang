@@ -29,6 +29,7 @@ const API_MANAGER_SESSION_SECRET = process.env.API_MANAGER_SESSION_SECRET || '';
 const ADMIN_USERNAME = process.env.API_MANAGER_ADMIN_USERNAME || 'admin';
 const ADMIN_PASSWORD = process.env.API_MANAGER_ADMIN_PASSWORD || '';
 const sessions = new Map();
+const loginAttempts = new Map();
 
 function buildRouteId(method, path) { return `${method.toUpperCase()}:${path}`; }
 function classifyDetectedAuth(method, path) {
@@ -108,7 +109,10 @@ function isAdmin(req) {
   const cookie = req.headers.cookie || '';
   const kv = Object.fromEntries(cookie.split(';').map(c => c.trim()).filter(Boolean).map(c => c.split('=')));
   const token = kv.api_manager_session;
-  return Boolean(token && sessions.has(token));
+  if (!token || !sessions.has(token)) return false;
+  const sess = sessions.get(token);
+  if (Date.now() - sess.createdAt > 28800000) { sessions.delete(token); return false; }
+  return true;
 }
 function requireAdmin(req, res) {
   if (!isAdmin(req)) {
@@ -121,7 +125,9 @@ function requireAdmin(req, res) {
 function loadApiRegistry() { try { return JSON.parse(readFileSync(API_REGISTRY_PATH, 'utf-8')); } catch { return []; } }
 function saveApiRegistry(routes) {
   writeFileSync(API_REGISTRY_PATH, JSON.stringify(routes, null, 2), 'utf-8');
-  if (existsSync(YUWANG_SERVER_DIR)) writeFileSync(YUWANG_REGISTRY_PATH, JSON.stringify(routes, null, 2), 'utf-8');
+  if (process.env.API_MANAGER_WRITE_BACK_TO_YUWANG === 'true' && existsSync(YUWANG_SERVER_DIR)) {
+    writeFileSync(YUWANG_REGISTRY_PATH, JSON.stringify(routes, null, 2), 'utf-8');
+  }
 }
 async function parseBody(req) { return new Promise(resolve => { let b=''; req.on('data',c=>b+=c); req.on('end',()=>{ try{resolve(JSON.parse(b||'{}'));}catch{resolve({});}});}); }
 
@@ -162,18 +168,30 @@ function syncRegistry() { /* deprecated, kept for compat */ return false; }
 
 const server = createServer(async (req, res) => {
   const url = new URL(req.url, `http://localhost:${PORT}`); const path = url.pathname; const method = req.method;
-  res.setHeader('Access-Control-Allow-Origin', '*'); res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, PATCH, DELETE, OPTIONS'); res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+  const origin = req.headers.origin || '';
+  const allowed = process.env.API_MANAGER_ALLOWED_ORIGIN || '';
+  if (!allowed || allowed.split(',').some(o => o.trim() === origin)) {
+    res.setHeader('Access-Control-Allow-Origin', allowed ? origin : '*');
+  }
+  res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, PATCH, DELETE, OPTIONS'); res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
   if (method === 'OPTIONS') { res.writeHead(204); res.end(); return; }
 
   if (path === '/api/manager/auth/login' && method === 'POST') {
     if (!API_MANAGER_SESSION_SECRET || !ADMIN_PASSWORD) { res.writeHead(500, {'Content-Type':'application/json'}); res.end(JSON.stringify({success:false,message:'Missing auth env config'})); return; }
+    const ip = req.headers['x-forwarded-for']?.split(',')[0]?.trim() || req.socket.remoteAddress;
+    const now = Date.now();
+    const attempts = loginAttempts.get(ip) || [];
+    const recent = attempts.filter(t => now - t < 300000);
+    if (recent.length >= 5) { res.writeHead(429, {'Content-Type':'application/json'}); res.end(JSON.stringify({success:false,message:'Too many attempts, try again later'})); return; }
     const body = await parseBody(req);
     if (body.username === ADMIN_USERNAME && verifyPassword(body.password, ADMIN_PASSWORD)) {
+      loginAttempts.delete(ip);
       const token = crypto.createHmac('sha256', API_MANAGER_SESSION_SECRET).update(`${Date.now()}-${Math.random()}`).digest('hex');
       sessions.set(token, { createdAt: Date.now() });
       res.setHeader('Set-Cookie', `api_manager_session=${token}; HttpOnly; Path=/; Max-Age=28800; SameSite=Lax`);
       res.writeHead(200, {'Content-Type':'application/json'}); res.end(JSON.stringify({success:true})); return;
     }
+    recent.push(now); loginAttempts.set(ip, recent);
     res.writeHead(401, {'Content-Type':'application/json'}); res.end(JSON.stringify({success:false,message:'invalid credentials'})); return;
   }
   if (path === '/api/manager/auth/logout' && method === 'POST') {
@@ -183,7 +201,7 @@ const server = createServer(async (req, res) => {
     res.writeHead(200, {'Content-Type':'application/json'}); res.end(JSON.stringify({success:true})); return;
   }
 
-  if (path.startsWith('/api/') && !path.startsWith('/api/manager/auth/') && !(path === '/api/modules' && method === 'GET') && !requireAdmin(req, res)) return;
+  if (path.startsWith('/api/') && !path.startsWith('/api/manager/auth/') && !requireAdmin(req, res)) return;
 
   if (path === '/api/registry' && method === 'GET') {
     const routes = loadApiRegistry();

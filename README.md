@@ -42,6 +42,8 @@ YUWANG_BASE_URL=http://localhost:3001
 API_MANAGER_SESSION_SECRET=your-random-secret
 API_MANAGER_ADMIN_USERNAME=admin
 API_MANAGER_ADMIN_PASSWORD=your-password-sha256-hash
+API_MANAGER_WRITE_BACK_TO_YUWANG=false
+API_MANAGER_ALLOWED_ORIGIN=
 ```
 
 **生成密码哈希：**
@@ -90,6 +92,8 @@ API-yuwang/
 | `API_MANAGER_SESSION_SECRET` | Session 密钥 | - |
 | `API_MANAGER_ADMIN_USERNAME` | 管理员用户名 | admin |
 | `API_MANAGER_ADMIN_PASSWORD` | 管理员密码（SHA-256 哈希） | - |
+| `API_MANAGER_WRITE_BACK_TO_YUWANG` | 是否写回 yuwang 项目的 api-registry.json | false |
+| `API_MANAGER_ALLOWED_ORIGIN` | CORS 允许的 origin 白名单（逗号分隔），留空则允许所有 | - |
 
 ### Nginx 部署（可选）
 
