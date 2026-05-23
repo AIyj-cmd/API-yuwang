@@ -1,5 +1,6 @@
 import { createServer } from 'http';
-import { readFileSync, writeFileSync, existsSync, readdirSync } from 'fs';
+import { readFileSync, writeFileSync, existsSync, readdirSync, statSync } from 'fs';
+import { gzipSync } from 'zlib';
 import { join, dirname } from 'path';
 import { fileURLToPath } from 'url';
 import crypto from 'crypto';
@@ -247,6 +248,39 @@ function syncRegistry() { /* deprecated, kept for compat */ return false; }
 
 const server = createServer(async (req, res) => {
   const url = new URL(req.url, `http://localhost:${PORT}`); const path = url.pathname; const method = req.method;
+
+  // 静态文件服务（提前到最前面，避免跑完所有 API 路由判断）
+  const STATIC_FILES = { '/': 'index.html', '/index.html': 'index.html', '/app.js': 'app.js', '/style.css': 'style.css' };
+  const MIME_TYPES = { '.html': 'text/html; charset=utf-8', '.js': 'application/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8' };
+  const staticFile = STATIC_FILES[path];
+  if (staticFile && method === 'GET') {
+    const filePath = join(__dirname, staticFile);
+    if (existsSync(filePath)) {
+      const stat = statSync(filePath);
+      const etag = `"${stat.size}-${stat.mtimeMs}"`;
+      // 304 缓存
+      if (req.headers['if-none-match'] === etag) { res.writeHead(304); res.end(); return; }
+      const ext = staticFile.slice(staticFile.lastIndexOf('.'));
+      const contentType = MIME_TYPES[ext] || 'application/octet-stream';
+      const raw = readFileSync(filePath);
+      const acceptGzip = (req.headers['accept-encoding'] || '').includes('gzip');
+      const headers = {
+        'Content-Type': contentType,
+        'Cache-Control': 'public, max-age=3600',
+        'ETag': etag,
+      };
+      if (acceptGzip && raw.length > 256) {
+        headers['Content-Encoding'] = 'gzip';
+        res.writeHead(200, headers);
+        res.end(gzipSync(raw));
+      } else {
+        headers['Content-Length'] = raw.length;
+        res.writeHead(200, headers);
+        res.end(raw);
+      }
+      return;
+    }
+  }
   const origin = req.headers.origin || '';
   const allowed = process.env.API_MANAGER_ALLOWED_ORIGIN || '';
   if (!allowed || allowed.split(',').some(o => o.trim() === origin)) {
@@ -330,7 +364,8 @@ const server = createServer(async (req, res) => {
     const elapsed = Date.now() - startTime;
     // 保存测试记录（不含敏感数据）
     const tr2 = loadTestRecords(); const rid2 = route.route_id;
-    const entry2 = { timestamp: new Date().toISOString(), method: 'real', statusCode: result.status || (result.success ? 200 : 500), responseTime: elapsed, conclusion: result.success ? 'passed' : 'failed', notes: result.message || '' };
+    const ok = result.status >= 200 && result.status < 300;
+    const entry2 = { timestamp: new Date().toISOString(), method: 'real', statusCode: result.status || 500, responseTime: elapsed, conclusion: ok ? 'passed' : 'failed', notes: result.message || '' };
     tr2[rid2] = { lastTest: entry2, history: [entry2, ...((tr2[rid2]?.history) || [])].slice(0, 20) };
     saveTestRecords(tr2);
     res.writeHead(200, {'Content-Type':'application/json'}); res.end(JSON.stringify(result)); return;
@@ -355,7 +390,7 @@ const server = createServer(async (req, res) => {
     const scanned = scanApisFromCode();
     const oldRoutes = loadApiRegistry();
     const oldMap = new Map(oldRoutes.map(r => [r.route_id || buildRouteId(r.method, r.path), r]));
-    const KEEP_FIELDS = ['customDescription','tags','module','favorite','frontendStatus','accessOverride','riskOverride','reviewNote','deprecatedReason','description','dbTables','hasAuditLog','frontendUsage'];
+    const KEEP_FIELDS = ['customDescription','tags','module','favorite','frontendStatus','accessOverride','riskOverride','reviewNote','deprecatedReason','lifecycle','description','dbTables','hasAuditLog','frontendUsage'];
     const merged = scanned.map(raw => {
       const gov = toGovernance(raw);
       const old = oldMap.get(gov.route_id);
@@ -476,6 +511,21 @@ const server = createServer(async (req, res) => {
   }
 
   // ===== 功能包 API =====
+  function validatePackRoutes(routes, targetClient) {
+    const registry = loadApiRegistry().map(r => ({ ...r, route_id: r.route_id || buildRouteId(r.method, r.path) }));
+    const regMap = new Map(registry.map(r => [r.route_id, r]));
+    const errors = [];
+    for (const pr of routes) {
+      const rid = pr.route_id || buildRouteId(pr.method, pr.path);
+      const reg = regMap.get(rid);
+      if (!reg) { errors.push(`${rid} 不存在于 registry`); continue; }
+      const lifecycle = reg.lifecycle || 'active';
+      if (lifecycle === 'deprecated' || lifecycle === 'removed') { errors.push(`${rid} 已废弃/移除 (lifecycle=${lifecycle})`); }
+      const auth = reg.accessOverride || reg.detectedAuth || reg.authType || 'user';
+      if (targetClient === 'user' && auth === 'admin') { errors.push(`${rid} 为 admin 接口，不能放入 user 功能包`); }
+    }
+    return errors;
+  }
   if (path === '/api/feature-packs' && method === 'GET') {
     const packs = loadFeaturePacks().sort((a, b) => new Date(b.updatedAt) - new Date(a.updatedAt));
     res.writeHead(200, { 'Content-Type': 'application/json' });
@@ -485,6 +535,9 @@ const server = createServer(async (req, res) => {
   if (path === '/api/feature-packs' && method === 'POST') {
     const body = await parseBody(req);
     if (!body.name) { res.writeHead(400, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ success: false, message: 'name is required' })); return; }
+    const targetClient = body.targetClient || 'user';
+    const routeErrors = validatePackRoutes(body.routes || [], targetClient);
+    if (routeErrors.length) { res.writeHead(400, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ success: false, message: '路由校验失败', errors: routeErrors })); return; }
     const packs = loadFeaturePacks();
     const pack = {
       id: `fp_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
@@ -514,6 +567,10 @@ const server = createServer(async (req, res) => {
     if (idx < 0) { res.writeHead(404, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ success: false, message: '功能包不存在' })); return; }
     const UPDATABLE = ['name', 'description', 'status', 'targetClient', 'routes', 'claudeStatus', 'claudeTaskId', 'acceptanceStatus', 'notes'];
     UPDATABLE.forEach(k => { if (body[k] !== undefined) packs[idx][k] = body[k]; });
+    if (body.routes || body.targetClient) {
+      const routeErrors = validatePackRoutes(packs[idx].routes || [], packs[idx].targetClient || 'user');
+      if (routeErrors.length) { res.writeHead(400, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ success: false, message: '路由校验失败', errors: routeErrors })); return; }
+    }
     packs[idx].updatedAt = new Date().toISOString();
     saveFeaturePacks(packs);
     res.writeHead(200, { 'Content-Type': 'application/json' });
@@ -601,20 +658,6 @@ const server = createServer(async (req, res) => {
       res.end(JSON.stringify({ success: false, message: e.message }));
     }
     return;
-  }
-
-  // 静态文件服务
-  const STATIC_FILES = { '/': 'index.html', '/index.html': 'index.html', '/app.js': 'app.js', '/style.css': 'style.css' };
-  const MIME_TYPES = { '.html': 'text/html; charset=utf-8', '.js': 'application/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8' };
-  const staticFile = STATIC_FILES[path];
-  if (staticFile && method === 'GET') {
-    const filePath = join(__dirname, staticFile);
-    if (existsSync(filePath)) {
-      const ext = staticFile.slice(staticFile.lastIndexOf('.'));
-      res.writeHead(200, { 'Content-Type': MIME_TYPES[ext] || 'application/octet-stream' });
-      res.end(readFileSync(filePath));
-      return;
-    }
   }
 
   res.writeHead(404, {'Content-Type':'application/json'}); res.end(JSON.stringify({ message: 'Not Found' }));
