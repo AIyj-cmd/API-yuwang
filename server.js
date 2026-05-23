@@ -28,6 +28,8 @@ const YUWANG_BASE_URL = process.env.YUWANG_BASE_URL || 'http://localhost:3001';
 const API_MANAGER_SESSION_SECRET = process.env.API_MANAGER_SESSION_SECRET || '';
 
 const CLAUDE_TASK_DRAFTS_PATH = join(__dirname, 'claude-task-drafts.json');
+const FEATURE_PACKS_PATH = join(__dirname, 'feature-packs.json');
+const TEST_RECORDS_PATH = join(__dirname, 'test-records.json');
 const API_MANAGER_ENABLE_AI_TASKS = process.env.API_MANAGER_ENABLE_AI_TASKS === 'true';
 const DEEPSEEK_API_KEY = process.env.DEEPSEEK_API_KEY || '';
 const DEEPSEEK_BASE_URL = process.env.DEEPSEEK_BASE_URL || 'https://api.deepseek.com';
@@ -139,6 +141,10 @@ async function parseBody(req) { return new Promise(resolve => { let b=''; req.on
 
 function loadClaudeTaskDrafts() { try { return JSON.parse(readFileSync(CLAUDE_TASK_DRAFTS_PATH, 'utf-8')); } catch { return []; } }
 function saveClaudeTaskDrafts(drafts) { writeFileSync(CLAUDE_TASK_DRAFTS_PATH, JSON.stringify(drafts, null, 2), 'utf-8'); }
+function loadFeaturePacks() { try { return JSON.parse(readFileSync(FEATURE_PACKS_PATH, 'utf-8')); } catch { return []; } }
+function saveFeaturePacks(packs) { writeFileSync(FEATURE_PACKS_PATH, JSON.stringify(packs, null, 2), 'utf-8'); }
+function loadTestRecords() { try { return JSON.parse(readFileSync(TEST_RECORDS_PATH, 'utf-8')); } catch { return {}; } }
+function saveTestRecords(records) { writeFileSync(TEST_RECORDS_PATH, JSON.stringify(records, null, 2), 'utf-8'); }
 function buildContextFromRoutes(routes, body = {}) {
   const allowUnreviewed = Boolean(body.allowUnreviewed);
   const targetClient = body.targetClient === 'admin' ? 'admin' : 'user';
@@ -296,6 +302,11 @@ const server = createServer(async (req, res) => {
     if (m === 'DELETE') { res.writeHead(403, {'Content-Type':'application/json'}); res.end(JSON.stringify({success:false,message:'DELETE real execution is blocked'})); return; }
     // dryRun=true 一律模拟，不真实请求
     if (dryRun) {
+      // 保存测试记录
+      const tr = loadTestRecords(); const rid = route.route_id;
+      const entry = { timestamp: new Date().toISOString(), method: 'dryRun', statusCode: 200, responseTime: null, conclusion: 'passed', notes: '模拟请求' };
+      tr[rid] = { lastTest: entry, history: [entry, ...((tr[rid]?.history) || [])].slice(0, 20) };
+      saveTestRecords(tr);
       res.writeHead(200, {'Content-Type':'application/json'});
       res.end(JSON.stringify({
         success: true,
@@ -314,13 +325,21 @@ const server = createServer(async (req, res) => {
       res.end(JSON.stringify({success:true, blocked:true, message:'High-risk/admin API requires dryRun:true', route_id: route.route_id}));
       return;
     }
-    const result = await proxyRequest(m, targetPath, headers, requestBody); res.writeHead(200, {'Content-Type':'application/json'}); res.end(JSON.stringify(result)); return;
+    const startTime = Date.now();
+    const result = await proxyRequest(m, targetPath, headers, requestBody);
+    const elapsed = Date.now() - startTime;
+    // 保存测试记录（不含敏感数据）
+    const tr2 = loadTestRecords(); const rid2 = route.route_id;
+    const entry2 = { timestamp: new Date().toISOString(), method: 'real', statusCode: result.status || (result.success ? 200 : 500), responseTime: elapsed, conclusion: result.success ? 'passed' : 'failed', notes: result.message || '' };
+    tr2[rid2] = { lastTest: entry2, history: [entry2, ...((tr2[rid2]?.history) || [])].slice(0, 20) };
+    saveTestRecords(tr2);
+    res.writeHead(200, {'Content-Type':'application/json'}); res.end(JSON.stringify(result)); return;
   }
   if (path.match(/^\/api\/registry\//) && ['PATCH','DELETE'].includes(method)) {
     const routeId = decodeURIComponent(path.split('/').pop()); let routes = loadApiRegistry(); const idx = routes.findIndex(r => (r.route_id || buildRouteId(r.method, r.path)) === routeId);
     if (idx < 0) { res.writeHead(404, {'Content-Type':'application/json'}); res.end(JSON.stringify({message:'API不存在'})); return; }
     if (method === 'DELETE') { const removed=routes.splice(idx,1)[0]; saveApiRegistry(routes); res.writeHead(200,{'Content-Type':'application/json'}); res.end(JSON.stringify({success:true,removed})); return; }
-    const body = await parseBody(req); const allow = ['customDescription','tags','module','favorite','frontendStatus','accessOverride','riskOverride','reviewNote','deprecatedReason'];
+    const body = await parseBody(req); const allow = ['customDescription','tags','module','favorite','frontendStatus','accessOverride','riskOverride','reviewNote','deprecatedReason','lifecycle'];
     allow.forEach(k=>{ if (body[k] !== undefined) routes[idx][k]=body[k];}); saveApiRegistry(routes); res.writeHead(200,{'Content-Type':'application/json'}); res.end(JSON.stringify({success:true,route:routes[idx]})); return;
   }
   if (path === '/api/scan' && method === 'GET') {
@@ -453,6 +472,134 @@ const server = createServer(async (req, res) => {
     saveCustomModules(custom);
     res.writeHead(200, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify({ success: true, modules: { ...MODULE_DEFINITIONS, ...custom } }));
+    return;
+  }
+
+  // ===== 功能包 API =====
+  if (path === '/api/feature-packs' && method === 'GET') {
+    const packs = loadFeaturePacks().sort((a, b) => new Date(b.updatedAt) - new Date(a.updatedAt));
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ success: true, packs }));
+    return;
+  }
+  if (path === '/api/feature-packs' && method === 'POST') {
+    const body = await parseBody(req);
+    if (!body.name) { res.writeHead(400, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ success: false, message: 'name is required' })); return; }
+    const packs = loadFeaturePacks();
+    const pack = {
+      id: `fp_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
+      name: body.name,
+      description: body.description || '',
+      status: body.status || '待规划',
+      targetClient: body.targetClient || 'user',
+      routes: body.routes || [],
+      claudeStatus: body.claudeStatus || 'not_generated',
+      claudeTaskId: body.claudeTaskId || null,
+      acceptanceStatus: body.acceptanceStatus || 'not_started',
+      notes: body.notes || '',
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString()
+    };
+    packs.push(pack);
+    saveFeaturePacks(packs);
+    res.writeHead(201, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ success: true, pack }));
+    return;
+  }
+  if (path.match(/^\/api\/feature-packs\/[^/]+$/) && method === 'PATCH') {
+    const id = decodeURIComponent(path.split('/').pop());
+    const body = await parseBody(req);
+    const packs = loadFeaturePacks();
+    const idx = packs.findIndex(p => p.id === id);
+    if (idx < 0) { res.writeHead(404, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ success: false, message: '功能包不存在' })); return; }
+    const UPDATABLE = ['name', 'description', 'status', 'targetClient', 'routes', 'claudeStatus', 'claudeTaskId', 'acceptanceStatus', 'notes'];
+    UPDATABLE.forEach(k => { if (body[k] !== undefined) packs[idx][k] = body[k]; });
+    packs[idx].updatedAt = new Date().toISOString();
+    saveFeaturePacks(packs);
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ success: true, pack: packs[idx] }));
+    return;
+  }
+  if (path.match(/^\/api\/feature-packs\/[^/]+$/) && method === 'DELETE') {
+    const id = decodeURIComponent(path.split('/').pop());
+    const packs = loadFeaturePacks();
+    const idx = packs.findIndex(p => p.id === id);
+    if (idx < 0) { res.writeHead(404, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ success: false, message: '功能包不存在' })); return; }
+    packs.splice(idx, 1);
+    saveFeaturePacks(packs);
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ success: true }));
+    return;
+  }
+
+  // ===== 测试记录 API =====
+  if (path === '/api/test-records' && method === 'GET') {
+    const records = loadTestRecords();
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ success: true, records }));
+    return;
+  }
+  if (path === '/api/test-records' && method === 'POST') {
+    const body = await parseBody(req);
+    if (!body.routeId) { res.writeHead(400, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ success: false, message: 'routeId required' })); return; }
+    const records = loadTestRecords();
+    const existing = records[body.routeId] || { history: [] };
+    const entry = {
+      timestamp: new Date().toISOString(),
+      method: body.testMethod || 'dryRun',        // dryRun | real
+      statusCode: body.statusCode || null,
+      responseTime: body.responseTime || null,     // ms
+      conclusion: body.conclusion || 'pending',    // passed | failed | pending
+      notes: body.notes || ''
+    };
+    existing.lastTest = entry;
+    existing.history.unshift(entry);
+    if (existing.history.length > 20) existing.history = existing.history.slice(0, 20);
+    records[body.routeId] = existing;
+    saveTestRecords(records);
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ success: true, record: existing }));
+    return;
+  }
+
+  // ===== DeepSeek 重复分析 API =====
+  if (path === '/api/deepseek-status' && method === 'GET') {
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ available: Boolean(DEEPSEEK_API_KEY) }));
+    return;
+  }
+  if (path === '/api/dedup-analyze' && method === 'POST') {
+    if (!DEEPSEEK_API_KEY) { res.writeHead(403, {'Content-Type':'application/json'}); res.end(JSON.stringify({success:false,message:'DeepSeek API Key 未配置'})); return; }
+    const body = await parseBody(req);
+    if (!body.groups || !body.groups.length) { res.writeHead(400, {'Content-Type':'application/json'}); res.end(JSON.stringify({success:false,message:'无分析数据'})); return; }
+    const groupsText = body.groups.map((g, i) => {
+      const routesText = g.routes.map(r => `  - ${r.method} ${r.path}（${r.name || '无名称'}，模块：${r.module}，描述：${r.description || '无'}）`).join('\n');
+      return `【组${i+1}·${g.type === 'path' ? '路径相似' : '名称相似'}】\n${routesText}`;
+    }).join('\n\n');
+    const systemPrompt = `你是 API 架构分析助手。分析以下疑似重复接口组，给出每组的建议。
+规则：
+1. 不要自动合并接口，只给建议
+2. 如果接口功能不同，说明各自职责，建议保留
+3. 如果确实重复，建议合并方案
+4. 如果命名混乱，建议规范命名
+5. 输出简洁，每组 2-3 句话
+6. 用中文回复`;
+    try {
+      const response = await fetch(`${DEEPSEEK_BASE_URL}/chat/completions`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${DEEPSEEK_API_KEY}` },
+        body: JSON.stringify({ model: DEEPSEEK_MODEL, messages: [{ role: 'system', content: systemPrompt }, { role: 'user', content: groupsText }], temperature: 0.3 })
+      });
+      const aiData = await response.json();
+      const content = aiData.choices?.[0]?.message?.content || '';
+      // 按组拆分建议
+      const suggestions = content.split(/【组\d+/).filter(Boolean).map(s => s.replace(/^.*?】\s*/, '').trim());
+      res.writeHead(200, {'Content-Type':'application/json'});
+      res.end(JSON.stringify({ success: true, suggestions }));
+    } catch (e) {
+      res.writeHead(500, {'Content-Type':'application/json'});
+      res.end(JSON.stringify({ success: false, message: e.message }));
+    }
     return;
   }
 
