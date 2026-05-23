@@ -274,7 +274,7 @@ const server = createServer(async (req, res) => {
     res.writeHead(200, {'Content-Type':'application/json'}); res.end(JSON.stringify({success:true})); return;
   }
 
-  if (path.startsWith('/api/') && !path.startsWith('/api/manager/auth/') && !requireAdmin(req, res)) return;
+  if (path.startsWith('/api/') && !path.startsWith('/api/manager/auth/') && path !== '/api/manager/config' && !requireAdmin(req, res)) return;
 
   if (path === '/api/registry' && method === 'GET') {
     const routes = loadApiRegistry();
@@ -379,10 +379,12 @@ const server = createServer(async (req, res) => {
     const registry = loadApiRegistry().map(r => ({ ...r, route_id: r.route_id || buildRouteId(r.method, r.path) }));
     const routes = (body.routeIds || []).map(id => registry.find(r => r.route_id === id));
     if (!routes.length || routes.some(r => !r)) { res.writeHead(400, {'Content-Type':'application/json'}); res.end(JSON.stringify({ success:false, message:'routeIds 无效' })); return; }
-    try { const context = buildContextFromRoutes(routes, body); const generatedPrompt = buildTemplatePrompt(context); const now = new Date().toISOString(); const id = `task_${Date.now()}`;
-      const draft = { id, title: context.featureName, moduleKey: routes[0].module || 'other', targetClient: context.targetClient, routeIds: routes.map(r=>r.route_id), source:'template', modelName:null, structuredContext:context, generatedPrompt, status:'draft', createdAt:now, updatedAt:now };
-      const drafts = loadClaudeTaskDrafts(); drafts.push(draft); saveClaudeTaskDrafts(drafts);
-      res.writeHead(200, {'Content-Type':'application/json'}); res.end(JSON.stringify({ success:true, draft })); } catch (e) { res.writeHead(400, {'Content-Type':'application/json'}); res.end(JSON.stringify({ success:false, message:e.message })); }
+    try { const context = buildContextFromRoutes(routes, body); const generatedPrompt = buildTemplatePrompt(context); const now = new Date().toISOString();
+      const routeIds = routes.map(r=>r.route_id).sort();
+      const id = `task_${Date.now()}`;
+      const draft = { id, title: context.featureName, moduleKey: routes[0].module || 'other', targetClient: context.targetClient, routeIds, source:'template', modelName:null, structuredContext:context, generatedPrompt, status:'draft', createdAt:now, updatedAt:now };
+      res.writeHead(200, {'Content-Type':'application/json'}); res.end(JSON.stringify({ success:true, draft }));
+    } catch (e) { res.writeHead(400, {'Content-Type':'application/json'}); res.end(JSON.stringify({ success:false, message:e.message })); }
     return;
   }
   if (path === '/api/claude-tasks/generate-ai' && method === 'POST') {
@@ -395,13 +397,37 @@ const server = createServer(async (req, res) => {
       const response = await fetch(`${DEEPSEEK_BASE_URL}/chat/completions`, { method:'POST', headers:{'Content-Type':'application/json','Authorization':`Bearer ${DEEPSEEK_API_KEY}`}, body: JSON.stringify({ model: DEEPSEEK_MODEL, messages:[{role:'system',content:systemPrompt},{role:'user',content:JSON.stringify(context)}], temperature:0.3 }) });
       if (!response.ok) { const t=await response.text(); throw new Error(`DeepSeek 调用失败: ${response.status} ${t}`); }
       const data = await response.json(); const generatedPrompt = data?.choices?.[0]?.message?.content?.trim(); if (!generatedPrompt) throw new Error('DeepSeek 未返回有效内容');
-      const now = new Date().toISOString(); const id = `task_${Date.now()}`; const draft = { id, title: context.featureName, moduleKey: routes[0].module || 'other', targetClient: context.targetClient, routeIds: routes.map(r=>r.route_id), source:'deepseek', modelName:DEEPSEEK_MODEL, structuredContext:context, generatedPrompt, status:'draft', createdAt:now, updatedAt:now };
-      const drafts = loadClaudeTaskDrafts(); drafts.push(draft); saveClaudeTaskDrafts(drafts); res.writeHead(200, {'Content-Type':'application/json'}); res.end(JSON.stringify({ success:true, draft }));
+      const now = new Date().toISOString();
+      const routeIds = routes.map(r=>r.route_id).sort();
+      const id = `task_${Date.now()}`;
+      const draft = { id, title: context.featureName, moduleKey: routes[0].module || 'other', targetClient: context.targetClient, routeIds, source:'deepseek', modelName:DEEPSEEK_MODEL, structuredContext:context, generatedPrompt, status:'draft', createdAt:now, updatedAt:now };
+      res.writeHead(200, {'Content-Type':'application/json'}); res.end(JSON.stringify({ success:true, draft }));
     } catch (e) { res.writeHead(400, {'Content-Type':'application/json'}); res.end(JSON.stringify({ success:false, message:e.message })); }
     return;
   }
   if (path === '/api/claude-tasks' && method === 'GET') { const drafts=loadClaudeTaskDrafts().sort((a,b)=>new Date(b.updatedAt)-new Date(a.updatedAt)); res.writeHead(200, {'Content-Type':'application/json'}); res.end(JSON.stringify({ success:true, drafts })); return; }
-  if (path.match(/^\/api\/claude-tasks\//) && method === 'PATCH') { const id = decodeURIComponent(path.split('/').pop()); const body = await parseBody(req); const drafts=loadClaudeTaskDrafts(); const idx=drafts.findIndex(d=>d.id===id); if (idx<0){res.writeHead(404,{'Content-Type':'application/json'});res.end(JSON.stringify({success:false,message:'草稿不存在'}));return;} const allowStatus=['draft','accepted','copied','archived']; if (body.status && !allowStatus.includes(body.status)) { res.writeHead(400,{'Content-Type':'application/json'});res.end(JSON.stringify({success:false,message:'无效状态'}));return;} ['title','generatedPrompt','status'].forEach(k=>{ if(body[k]!==undefined) drafts[idx][k]=body[k];}); drafts[idx].updatedAt=new Date().toISOString(); saveClaudeTaskDrafts(drafts); res.writeHead(200,{'Content-Type':'application/json'});res.end(JSON.stringify({success:true,draft:drafts[idx]})); return; }
+  if (path.match(/^\/api\/claude-tasks\//) && method === 'PATCH') {
+    const id = decodeURIComponent(path.split('/').pop());
+    const body = await parseBody(req);
+    const drafts = loadClaudeTaskDrafts();
+    const idx = drafts.findIndex(d => d.id === id);
+    const allowStatus = ['draft','accepted','copied','archived'];
+    if (body.status && !allowStatus.includes(body.status)) { res.writeHead(400,{'Content-Type':'application/json'});res.end(JSON.stringify({success:false,message:'无效状态'}));return; }
+    if (idx < 0) {
+      // 新草稿 - upsert 创建
+      const now = new Date().toISOString();
+      const draft = { id, title: body.title || '未命名', generatedPrompt: body.generatedPrompt || '', routeIds: body.routeIds || [], source: body.source || 'manual', modelName: body.modelName || null, targetClient: body.targetClient || 'user', structuredContext: body.structuredContext || null, status: body.status || 'draft', createdAt: now, updatedAt: now };
+      drafts.push(draft);
+      saveClaudeTaskDrafts(drafts);
+      res.writeHead(200,{'Content-Type':'application/json'});res.end(JSON.stringify({success:true,draft}));
+    } else {
+      ['title','generatedPrompt','status'].forEach(k => { if(body[k]!==undefined) drafts[idx][k]=body[k]; });
+      drafts[idx].updatedAt = new Date().toISOString();
+      saveClaudeTaskDrafts(drafts);
+      res.writeHead(200,{'Content-Type':'application/json'});res.end(JSON.stringify({success:true,draft:drafts[idx]}));
+    }
+    return;
+  }
   if (path.match(/^\/api\/claude-tasks\/[^/]+\/copied$/) && method === 'POST') { const parts=path.split('/'); const id=decodeURIComponent(parts[3]); const drafts=loadClaudeTaskDrafts(); const idx=drafts.findIndex(d=>d.id===id); if(idx<0){res.writeHead(404,{'Content-Type':'application/json'});res.end(JSON.stringify({success:false,message:'草稿不存在'}));return;} drafts[idx].status='copied'; drafts[idx].updatedAt=new Date().toISOString(); saveClaudeTaskDrafts(drafts); res.writeHead(200,{'Content-Type':'application/json'}); res.end(JSON.stringify({success:true,draft:drafts[idx]})); return; }
   if (path.match(/^\/api\/claude-tasks\//) && method === 'DELETE') { const id = decodeURIComponent(path.split('/').pop()); let drafts=loadClaudeTaskDrafts(); const before=drafts.length; drafts=drafts.filter(d=>d.id!==id); if(before===drafts.length){res.writeHead(404,{'Content-Type':'application/json'});res.end(JSON.stringify({success:false,message:'草稿不存在'}));return;} saveClaudeTaskDrafts(drafts); res.writeHead(200,{'Content-Type':'application/json'});res.end(JSON.stringify({success:true})); return; }
 

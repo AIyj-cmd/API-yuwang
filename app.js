@@ -46,6 +46,7 @@ async function doLogin() {
     if (data.success) {
       hideLoginPage();
       loadData();
+      loadManagerConfig();
     } else {
       errorEl.textContent = data.message || '登录失败';
       errorEl.style.display = 'block';
@@ -162,6 +163,10 @@ function switchTab(tab) {
   if (tab === 'features') {
     currentModuleFilter = '';
     renderCategories();
+  }
+  if (tab === 'claude') {
+    renderClaudeRouteList();
+    loadClaudeDrafts();
   }
 }
 
@@ -932,58 +937,336 @@ function showToast(message) {
 }
 
 // ===== 初始化 =====
-checkAuth().then(ok => { if (ok) loadData(); });
+// (init moved to end of file with loadManagerConfig)
 
 let claudeTaskRouteIds = [];
 let aiTaskEnabled = false;
 let latestGeneratedDraft = null;
+let claudeSelectedSet = new Set();
 
 async function loadManagerConfig() {
-  try { const r = await fetch('/api/manager/config'); const d = await r.json(); aiTaskEnabled = Boolean(d.aiTasksEnabled); const btn=document.getElementById('aiGenerateBtn'); if (btn) btn.style.display = aiTaskEnabled ? 'inline-block' : 'none'; } catch {}
+  try { const r = await fetch('/api/manager/config', { credentials: 'include' }); const d = await r.json(); aiTaskEnabled = Boolean(d.aiTasksEnabled);
+    const btn=document.getElementById('aiGenerateBtn'); if (btn) btn.style.display = aiTaskEnabled ? 'inline-block' : 'none';
+    const btn2=document.getElementById('claudeAiBtn'); if (btn2) btn2.style.display = aiTaskEnabled ? 'inline-block' : 'none';
+  } catch {}
 }
 
-function openClaudeTaskModalByIndexes(indexes) {
-  if (!indexes.length) return showToast('请先选择接口');
-  claudeTaskRouteIds = indexes.map(i => allRoutes[i]?.route_id).filter(Boolean);
-  document.getElementById('taskFeatureName').value = '前端任务接入';
-  document.getElementById('taskTargetClient').value = 'user';
-  document.getElementById('taskSelectedRoutes').innerHTML = claudeTaskRouteIds.map(id => `<div><code>${id}</code></div>`).join('');
-  document.getElementById('taskPromptPreview').value = '';
-  document.getElementById('claudeTaskModal').style.display = 'flex';
-}
-function openClaudeTaskModalFromSelection() { openClaudeTaskModalByIndexes(Array.from(selectedItems)); }
-function openClaudeTaskModalByModule(moduleKey) { const idxs = allRoutes.map((r,i)=>({r,i})).filter(x=>x.r.module===moduleKey).map(x=>x.i); openClaudeTaskModalByIndexes(idxs); }
-function openClaudeTaskModalByRoute(index) { openClaudeTaskModalByIndexes([index]); }
-function closeClaudeTaskModal() { document.getElementById('claudeTaskModal').style.display = 'none'; }
 
-async function generateTask(url) {
-  const payload = { routeIds: claudeTaskRouteIds, targetClient: document.getElementById('taskTargetClient').value, featureName: document.getElementById('taskFeatureName').value || '前端任务接入' };
-  const res = await fetch(url,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});
-  const data = await res.json();
-  if (!data.success) throw new Error(data.message || '生成失败');
-  latestGeneratedDraft = data.draft;
-  document.getElementById('taskPromptPreview').value = data.draft.generatedPrompt || '';
-}
-async function generateTemplateTask(){ try { await generateTask('/api/claude-tasks/generate-template'); showToast('模板任务生成成功'); } catch(e){showToast(e.message);} }
-async function generateAiTask(){ try { await generateTask('/api/claude-tasks/generate-ai'); showToast('AI 任务生成成功'); } catch(e){showToast(e.message);} }
-function copyTaskPrompt(){ const t=document.getElementById('taskPromptPreview'); t.select(); document.execCommand('copy'); showToast('已复制任务'); }
-async function saveTaskDraft(){ if(!latestGeneratedDraft) return showToast('请先生成任务'); await fetch(`/api/claude-tasks/${encodeURIComponent(latestGeneratedDraft.id)}`,{method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify({generatedPrompt:document.getElementById('taskPromptPreview').value,title:document.getElementById('taskFeatureName').value||latestGeneratedDraft.title})}); showToast('草稿已保存'); }
-
-async function loadClaudeDrafts() {
-  const res = await fetch('/api/claude-tasks'); const data = await res.json();
-  const list = data.drafts || [];
-  document.getElementById('claudeDraftList').innerHTML = list.map(d=>`<div style="border:1px solid #e5e7eb;border-radius:8px;padding:12px;margin-bottom:8px"><div style="font-weight:600">${d.title}</div><div style="font-size:12px;color:#6b7280">${d.source} · ${d.status}</div><textarea id="draft-${d.id}" style="width:100%;min-height:120px;margin-top:8px">${d.generatedPrompt||''}</textarea><div style="display:flex;gap:8px;margin-top:8px"><button class="btn btn-secondary" onclick="copyDraft('${d.id}')">复制</button><button class="btn btn-primary" onclick="updateDraft('${d.id}')">保存</button><button class="btn btn-secondary" onclick="markCopied('${d.id}')">标记已复制</button><button class="btn btn-secondary" onclick="deleteDraft('${d.id}')">删除</button></div></div>`).join('') || '<div>暂无草稿</div>';
-  document.getElementById('claudeDraftModal').style.display='flex';
-}
-function closeDraftModal(){ document.getElementById('claudeDraftModal').style.display='none'; }
-async function updateDraft(id){ const v=document.getElementById(`draft-${id}`).value; await fetch(`/api/claude-tasks/${encodeURIComponent(id)}`,{method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify({generatedPrompt:v})}); showToast('已保存'); }
-async function deleteDraft(id){ await fetch(`/api/claude-tasks/${encodeURIComponent(id)}`,{method:'DELETE'}); loadClaudeDrafts(); }
-async function markCopied(id){ await fetch(`/api/claude-tasks/${encodeURIComponent(id)}/copied`,{method:'POST'}); loadClaudeDrafts(); }
-function copyDraft(id){ const t=document.getElementById(`draft-${id}`); t.select(); document.execCommand('copy'); showToast('已复制'); }
-
-const _renderCategoryCard = renderCategoryCard;
-renderCategoryCard = function(key, data, mod) { return _renderCategoryCard(key,data,mod).replace('</div>','<div style="margin-top:8px"><button class="btn btn-secondary" onclick="event.stopPropagation();openClaudeTaskModalByModule(\''+key+'\')">为本模块生成前端任务</button></div></div>'); };
-const _viewDetail = viewDetail;
-viewDetail = function(index){ _viewDetail(index); const body=document.getElementById('detailBody'); body.insertAdjacentHTML('beforeend', `<div style="margin-top:12px"><button class="btn btn-primary" onclick="openClaudeTaskModalByRoute(${index})">生成 Claude Code 任务</button></div>`); };
 
 checkAuth().then(ok => { if (ok) { loadData(); loadManagerConfig(); } });
+
+// ===== Claude 任务生成器 - 独立页面 =====
+function renderClaudeRouteList() {
+  const search = (document.getElementById('claudeRouteSearch')?.value || '').toLowerCase();
+  const modFilter = document.getElementById('claudeModuleFilter')?.value || '';
+  const filtered = allRoutes.filter(r => {
+    if (modFilter && r.module !== modFilter) return false;
+    if (search && !r.path.toLowerCase().includes(search) && !r.name.toLowerCase().includes(search)) return false;
+    return true;
+  });
+  const el = document.getElementById('claudeRouteList');
+  if (!el) return;
+  el.innerHTML = filtered.map(r => {
+    const checked = claudeSelectedSet.has(r.route_id) ? 'checked' : '';
+    const fs = frontendStatusLabels[r.frontendStatus] || frontendStatusLabels.needs_review;
+    return `<label style="display:flex;align-items:center;gap:6px;padding:4px 6px;border-radius:4px;cursor:pointer;font-size:12px;${checked ? 'background:#eff6ff' : ''}" onmouseover="this.style.background='#f9fafb'" onmouseout="this.style.background='${checked ? '#eff6ff' : 'transparent'}'">
+      <input type="checkbox" ${checked} onchange="claudeToggleRoute('${r.route_id}')" style="width:14px;height:14px" />
+      <span class="method-badge ${r.method.toLowerCase()}" style="font-size:10px;padding:1px 5px">${r.method}</span>
+      <span style="flex:1;font-family:monospace;font-size:11px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${r.path}</span>
+      <span class="frontend-status ${fs.cls}" style="font-size:9px;padding:1px 4px">${fs.icon}</span>
+    </label>`;
+  }).join('') || '<div style="text-align:center;padding:20px;color:#9ca3af;font-size:13px">无匹配接口</div>';
+  updateClaudeSelectedCount();
+  // 填充模块下拉
+  const modSelect = document.getElementById('claudeModuleFilter');
+  if (modSelect && modSelect.options.length <= 1) {
+    const mods = [...new Set(allRoutes.map(r => r.module).filter(Boolean))].sort();
+    mods.forEach(m => { const opt = document.createElement('option'); opt.value = m; const mm = MODULE_MAP[m]; opt.textContent = mm ? `${mm.icon} ${mm.name}` : m; modSelect.appendChild(opt); });
+  }
+}
+
+function claudeToggleRoute(routeId) {
+  if (claudeSelectedSet.has(routeId)) claudeSelectedSet.delete(routeId); else claudeSelectedSet.add(routeId);
+  renderClaudeRouteList();
+}
+
+function claudeSelectByModule() {
+  const mod = document.getElementById('claudeModuleFilter').value;
+  if (!mod) return showToast('请先选择一个模块');
+  allRoutes.filter(r => r.module === mod).forEach(r => claudeSelectedSet.add(r.route_id));
+  renderClaudeRouteList();
+  showToast(`已选 ${mod} 模块全部接口`);
+}
+
+function claudeSelectPlanned() {
+  allRoutes.filter(r => r.frontendStatus === 'planned').forEach(r => claudeSelectedSet.add(r.route_id));
+  renderClaudeRouteList();
+  showToast('已选全部规划中接口');
+}
+
+function claudeClearSelection() {
+  claudeSelectedSet.clear();
+  renderClaudeRouteList();
+}
+
+function updateClaudeSelectedCount() {
+  const el = document.getElementById('claudeSelectedCount');
+  if (el) el.textContent = claudeSelectedSet.size;
+}
+
+function getClaudePayload() {
+  const routeIds = Array.from(claudeSelectedSet);
+  if (!routeIds.length) throw new Error('请先选择接口');
+  return {
+    routeIds,
+    targetClient: document.getElementById('claudeTargetClient').value,
+    featureName: document.getElementById('claudeFeatureName').value || '前端任务接入'
+  };
+}
+
+async function generateClaudeTemplate() {
+  try {
+    const payload = getClaudePayload();
+    const res = await fetch('/api/claude-tasks/generate-template', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
+    const data = await res.json();
+    if (!data.success) throw new Error(data.message);
+    latestGeneratedDraft = data.draft;
+    document.getElementById('claudePromptPreview').value = data.draft.generatedPrompt || '';
+    showToast(data.reused ? '📄 已更新现有草稿' : '📄 模板任务生成成功');
+  } catch (e) { showToast('❌ ' + e.message); }
+}
+
+async function generateClaudeAi() {
+  const btn = document.getElementById('claudeAiBtn');
+  const origHTML = btn.innerHTML;
+  btn.disabled = true;
+  btn.innerHTML = '⏳ AI 生成中...';
+  btn.style.opacity = '0.7';
+  btn.style.cursor = 'wait';
+  try {
+    const payload = getClaudePayload();
+    const res = await fetch('/api/claude-tasks/generate-ai', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
+    const data = await res.json();
+    if (!data.success) throw new Error(data.message);
+    latestGeneratedDraft = data.draft;
+    document.getElementById('claudePromptPreview').value = data.draft.generatedPrompt || '';
+    showToast(data.reused ? '🤖 已更新现有草稿' : '🤖 AI 任务生成成功');
+  } catch (e) { showToast('❌ ' + e.message); }
+  finally {
+    btn.disabled = false;
+    btn.innerHTML = origHTML;
+    btn.style.opacity = '';
+    btn.style.cursor = '';
+  }
+}
+
+function copyClaudePrompt() {
+  const el = document.getElementById('claudePromptPreview');
+  if (!el.value) return showToast('请先生成任务');
+  if (navigator.clipboard && window.isSecureContext) {
+    navigator.clipboard.writeText(el.value).then(() => showToast('📋 已复制到剪贴板')).catch(() => fallbackCopy(el));
+  } else {
+    fallbackCopy(el);
+  }
+}
+function fallbackCopy(el) { el.select(); document.execCommand('copy'); showToast('📋 已复制到剪贴板'); }
+
+async function saveClaudeDraft() {
+  if (!latestGeneratedDraft) return showToast('请先生成任务');
+  const title = document.getElementById('claudeFeatureName').value || latestGeneratedDraft.title;
+  const prompt = document.getElementById('claudePromptPreview').value;
+  await fetch(`/api/claude-tasks/${encodeURIComponent(latestGeneratedDraft.id)}`, {
+    method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      title, generatedPrompt: prompt,
+      routeIds: latestGeneratedDraft.routeIds,
+      source: latestGeneratedDraft.source,
+      modelName: latestGeneratedDraft.modelName,
+      targetClient: latestGeneratedDraft.targetClient,
+      structuredContext: latestGeneratedDraft.structuredContext
+    })
+  });
+  showToast('💾 草稿已保存');
+  loadClaudeDrafts();
+}
+
+// ===== 草稿列表 =====
+let selectedDraftIds = new Set();
+
+async function loadClaudeDrafts() {
+  try {
+    selectedDraftIds.clear();
+    updateDraftSelectionUI();
+    const res = await fetch('/api/claude-tasks');
+    const data = await res.json();
+    if (!data.success) throw new Error(data.message);
+    renderClaudeDrafts(data.drafts || []);
+  } catch (e) {
+    console.error('加载草稿失败:', e);
+    document.getElementById('claudeDraftsList').innerHTML = '<div style="color:#ef4444;text-align:center;padding:20px;font-size:13px">加载失败</div>';
+  }
+}
+
+function updateDraftSelectionUI() {
+  const count = selectedDraftIds.size;
+  const countEl = document.getElementById('draftSelectedCount');
+  const batchBtn = document.getElementById('draftBatchDeleteBtn');
+  if (count > 0) {
+    countEl.style.display = 'inline';
+    countEl.textContent = `已选 ${count}`;
+    batchBtn.style.display = 'inline-block';
+  } else {
+    countEl.style.display = 'none';
+    batchBtn.style.display = 'none';
+  }
+}
+
+function toggleDraftSelect(id) {
+  if (selectedDraftIds.has(id)) {
+    selectedDraftIds.delete(id);
+  } else {
+    selectedDraftIds.add(id);
+  }
+  updateDraftSelectionUI();
+  // 更新复选框样式
+  const cb = document.getElementById('cb-' + id);
+  if (cb) {
+    cb.style.background = selectedDraftIds.has(id) ? '#3b82f6' : 'white';
+    cb.style.borderColor = selectedDraftIds.has(id) ? '#3b82f6' : '#d1d5db';
+    cb.innerHTML = selectedDraftIds.has(id) ? '<span style="color:white;font-size:10px;line-height:1">✓</span>' : '';
+  }
+}
+
+function renderClaudeDrafts(drafts) {
+  const container = document.getElementById('claudeDraftsList');
+  if (!drafts.length) {
+    container.innerHTML = '<div style="color:#9ca3af;text-align:center;padding:20px;font-size:13px">暂无草稿</div>';
+    return;
+  }
+  const sourceLabel = { template: '📄 模板', ai: '🤖 AI', deepseek: '🤖 deepseek', manual: '✏️ 手动' };
+  const statusLabel = { draft: '草稿', accepted: '已采纳', copied: '已复制', archived: '已归档' };
+  const statusColor = { draft: '#6b7280', accepted: '#10b981', copied: '#3b82f6', archived: '#9ca3af' };
+  container.innerHTML = drafts.map(d => {
+    const date = new Date(d.updatedAt).toLocaleString('zh-CN', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' });
+    const promptPreview = (d.generatedPrompt || '').substring(0, 80).replace(/\n/g, ' ');
+    const checked = selectedDraftIds.has(d.id);
+    return `<div style="display:flex;align-items:center;gap:12px;padding:10px 12px;border:1px solid #e5e7eb;border-radius:8px;margin-bottom:8px;transition:background 0.15s" onmouseover="this.style.background='#f9fafb'" onmouseout="this.style.background='white'">
+      <div id="cb-${d.id}" onclick="toggleDraftSelect('${d.id}')" style="width:18px;height:18px;border:2px solid ${checked ? '#3b82f6' : '#d1d5db'};border-radius:4px;cursor:pointer;display:flex;align-items:center;justify-content:center;flex-shrink:0;background:${checked ? '#3b82f6' : 'white'}">${checked ? '<span style="color:white;font-size:10px;line-height:1">✓</span>' : ''}</div>
+      <div style="flex:1;min-width:0;cursor:pointer" onclick="previewDraft('${d.id}')">
+        <div style="display:flex;align-items:center;gap:8px;margin-bottom:4px">
+          <span style="font-weight:600;font-size:13px;color:#1f2937">${d.title || '未命名'}</span>
+          <span style="font-size:11px;padding:2px 6px;border-radius:4px;background:${statusColor[d.status] || '#6b7280'}20;color:${statusColor[d.status] || '#6b7280'}">${statusLabel[d.status] || d.status}</span>
+          <span style="font-size:11px;color:#9ca3af">${sourceLabel[d.source] || d.source}</span>
+        </div>
+        <div style="font-size:11px;color:#6b7280;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${promptPreview}...</div>
+      </div>
+      <div style="display:flex;align-items:center;gap:4px;flex-shrink:0">
+        <span style="font-size:11px;color:#9ca3af">${date}</span>
+        <button class="btn-icon" title="下载" onclick="downloadDraft('${d.id}')">📥</button>
+        <button class="btn-icon" title="删除" onclick="deleteDraft('${d.id}')">🗑️</button>
+      </div>
+    </div>`;
+  }).join('');
+}
+
+let currentPreviewDraft = null;
+
+async function previewDraft(id) {
+  try {
+    const res = await fetch('/api/claude-tasks');
+    const data = await res.json();
+    const draft = (data.drafts || []).find(d => d.id === id);
+    if (!draft) return showToast('❌ 草稿不存在');
+    currentPreviewDraft = draft;
+    document.getElementById('draftPreviewTitle').textContent = `📄 ${draft.title || '未命名'}`;
+    document.getElementById('draftPreviewContent').value = draft.generatedPrompt || '';
+    document.getElementById('draftPreviewModal').style.display = 'flex';
+  } catch (e) { showToast('❌ ' + e.message); }
+}
+
+function closeDraftPreview() {
+  document.getElementById('draftPreviewModal').style.display = 'none';
+  currentPreviewDraft = null;
+}
+
+function copyDraftPreview() {
+  const el = document.getElementById('draftPreviewContent');
+  if (!el.value) return showToast('没有内容');
+  if (navigator.clipboard && window.isSecureContext) {
+    navigator.clipboard.writeText(el.value).then(() => showToast('📋 已复制到剪贴板')).catch(() => { el.select(); document.execCommand('copy'); showToast('📋 已复制'); });
+  } else {
+    el.select(); document.execCommand('copy'); showToast('📋 已复制');
+  }
+}
+
+function loadDraftToEditor() {
+  if (!currentPreviewDraft) return;
+  document.getElementById('claudePromptPreview').value = currentPreviewDraft.generatedPrompt || '';
+  document.getElementById('claudeFeatureName').value = currentPreviewDraft.title || '';
+  latestGeneratedDraft = currentPreviewDraft;
+  closeDraftPreview();
+  showToast('📝 已加载到编辑器');
+}
+
+function downloadDraft(id) {
+  fetch('/api/claude-tasks').then(r => r.json()).then(data => {
+    const draft = (data.drafts || []).find(d => d.id === id);
+    if (!draft) return showToast('❌ 草稿不存在');
+    const content = draft.generatedPrompt || '';
+    const blob = new Blob([content], { type: 'text/markdown;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `${draft.title || '草稿'}.md`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+    showToast('📥 已下载草稿');
+  }).catch(e => showToast('❌ ' + e.message));
+}
+
+async function deleteDraft(id) {
+  if (!confirm('确定删除此草稿？')) return;
+  try {
+    const res = await fetch(`/api/claude-tasks/${encodeURIComponent(id)}`, { method: 'DELETE' });
+    const data = await res.json();
+    if (!data.success) throw new Error(data.message);
+    showToast('🗑️ 草稿已删除');
+    loadClaudeDrafts();
+  } catch (e) { showToast('❌ ' + e.message); }
+}
+
+async function batchDeleteDrafts() {
+  if (!selectedDraftIds.size) return showToast('请先选择草稿');
+  if (!confirm(`确定删除选中的 ${selectedDraftIds.size} 个草稿？`)) return;
+  try {
+    const ids = [...selectedDraftIds];
+    const results = await Promise.all(ids.map(id =>
+      fetch(`/api/claude-tasks/${encodeURIComponent(id)}`, { method: 'DELETE' }).then(r => r.json())
+    ));
+    const failed = results.filter(r => !r.success);
+    if (failed.length) {
+      showToast(`⚠️ ${failed.length} 个删除失败`);
+    } else {
+      showToast(`🗑️ 已删除 ${ids.length} 个草稿`);
+    }
+    loadClaudeDrafts();
+  } catch (e) { showToast('❌ ' + e.message); }
+}
+
+async function clearAllDrafts() {
+  if (!confirm('⚠️ 确定清空所有草稿？此操作不可撤销！')) return;
+  try {
+    const res = await fetch('/api/claude-tasks');
+    const data = await res.json();
+    if (!data.success) throw new Error(data.message);
+    const ids = (data.drafts || []).map(d => d.id);
+    if (!ids.length) return showToast('没有草稿可清空');
+    await Promise.all(ids.map(id =>
+      fetch(`/api/claude-tasks/${encodeURIComponent(id)}`, { method: 'DELETE' })
+    ));
+    showToast(`🔥 已清空 ${ids.length} 个草稿`);
+    loadClaudeDrafts();
+  } catch (e) { showToast('❌ ' + e.message); }
+}
