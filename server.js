@@ -393,6 +393,7 @@ const server = createServer(async (req, res) => {
     const body = await parseBody(req);
     const registry = loadApiRegistry().map(r => ({ ...r, route_id: r.route_id || buildRouteId(r.method, r.path) }));
     const routes = (body.routeIds || []).map(id => registry.find(r => r.route_id === id));
+    if (!routes.length || routes.some(r => !r)) { res.writeHead(400, {'Content-Type':'application/json'}); res.end(JSON.stringify({ success:false, message:'routeIds 无效' })); return; }
     try { const context = buildContextFromRoutes(routes, body);
       const systemPrompt = '你是一个前端任务说明生成器。你只负责把结构化 API 信息改写成 Claude Code 可以执行的前端任务。你不能编造不存在的接口。你不能要求修改后端。你不能要求新增数据库字段。你不能要求新增后端接口。你不能隐藏权限风险。你必须明确区分用户前台和管理后台。你必须输出中文。你只输出最终任务正文，不要输出解释。';
       const response = await fetch(`${DEEPSEEK_BASE_URL}/chat/completions`, { method:'POST', headers:{'Content-Type':'application/json','Authorization':`Bearer ${DEEPSEEK_API_KEY}`}, body: JSON.stringify({ model: DEEPSEEK_MODEL, messages:[{role:'system',content:systemPrompt},{role:'user',content:JSON.stringify(context)}], temperature:0.3 }) });
