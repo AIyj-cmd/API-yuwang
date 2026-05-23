@@ -37,6 +37,7 @@
       <div class="nav-tab" onclick="switchTab('impact')">🔍 变更影响</div>
       <div class="nav-tab" onclick="switchTab('dedup')">🧬 重复识别</div>
       <div class="nav-tab" onclick="switchTab('packs')">📦 功能包</div>
+      <div class="nav-tab" onclick="switchTab('scenarios')">🧪 验收场景</div>
       <div class="nav-tab" onclick="switchTab('claude')">🤖 Claude 任务</div>
       <div class="nav-tab" onclick="switchTab('prerelease')">🚀 发布前检查</div>
     </div>
@@ -392,6 +393,151 @@
         <div style="display:flex;gap:8px;margin-top:20px;justify-content:flex-end">
           <button class="btn btn-secondary" onclick="closePackModal()">取消</button>
           <button class="btn btn-primary" onclick="savePack()">💾 保存</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- 验收场景页面 -->
+  <div id="page-scenarios" class="page">
+    <div class="container">
+      <div class="page-header">
+        <h1>🧪 验收场景</h1>
+        <div class="header-actions">
+          <select id="scenarioFilterFeature" onchange="loadScenarios()" style="padding:8px 12px;border:1px solid #d1d5db;border-radius:8px;font-size:14px">
+            <option value="">全部功能包</option>
+          </select>
+          <select id="scenarioFilterStatus" onchange="loadScenarios()" style="padding:8px 12px;border:1px solid #d1d5db;border-radius:8px;font-size:14px">
+            <option value="">全部状态</option>
+            <option value="draft">📝 草稿</option>
+            <option value="ready">✅ 就绪</option>
+            <option value="passed">🟢 通过</option>
+            <option value="failed">🔴 失败</option>
+            <option value="blocked">🚫 阻塞</option>
+          </select>
+          <button class="btn btn-primary" onclick="openScenarioModal()">➕ 新建场景</button>
+        </div>
+      </div>
+
+      <!-- 场景列表 -->
+      <div id="scenarioList" class="scenario-grid"></div>
+    </div>
+  </div>
+
+  <!-- 场景编辑弹窗 -->
+  <div id="scenarioModal" class="modal-overlay" style="display:none" onclick="if(event.target===this)closeScenarioModal()">
+    <div class="modal" style="max-width:560px">
+      <div class="modal-header">
+        <h2 id="scenarioModalTitle">➕ 新建验收场景</h2>
+        <button class="btn-close" onclick="closeScenarioModal()">✕</button>
+      </div>
+      <div class="modal-body">
+        <div class="detail-grid">
+          <div class="detail-row">
+            <label>功能包 *</label>
+            <select id="scenarioFeatureKey" style="width:100%;padding:10px;border:1px solid #d1d5db;border-radius:8px;font-size:14px;background:white">
+              <option value="">请选择功能包</option>
+            </select>
+          </div>
+          <div class="detail-row">
+            <label>场景名称 *</label>
+            <input id="scenarioName" placeholder="如：工会创建成功、鱼鳞不足创建失败" style="width:100%;padding:10px;border:1px solid #d1d5db;border-radius:8px;font-size:14px" />
+          </div>
+          <div class="detail-row">
+            <label>场景描述</label>
+            <textarea id="scenarioDesc" placeholder="描述这个验收场景要验证什么..." style="width:100%;padding:10px;border:1px solid #d1d5db;border-radius:8px;font-size:14px;min-height:60px;resize:vertical"></textarea>
+          </div>
+          <div class="detail-row">
+            <label>前置条件</label>
+            <textarea id="scenarioPrecond" placeholder="执行此场景前需要满足的条件..." style="width:100%;padding:10px;border:1px solid #d1d5db;border-radius:8px;font-size:14px;min-height:60px;resize:vertical"></textarea>
+          </div>
+        </div>
+        <div style="display:flex;gap:8px;margin-top:20px;justify-content:flex-end">
+          <button class="btn btn-secondary" onclick="closeScenarioModal()">取消</button>
+          <button class="btn btn-primary" onclick="saveScenario()">💾 保存</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- 场景详情弹窗 -->
+  <div id="scenarioDetailModal" class="modal-overlay" style="display:none" onclick="if(event.target===this)closeScenarioDetailModal()">
+    <div class="modal" style="max-width:780px;max-height:85vh;overflow:auto">
+      <div class="modal-header">
+        <h2 id="scenarioDetailTitle">📋 场景详情</h2>
+        <button class="btn-close" onclick="closeScenarioDetailModal()">✕</button>
+      </div>
+      <div class="modal-body">
+        <!-- 基本信息 -->
+        <div id="scenarioDetailInfo" class="scenario-detail-info"></div>
+
+        <!-- 测试步骤 -->
+        <div style="margin-top:20px">
+          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px">
+            <h3 style="font-size:16px;font-weight:600">📝 测试步骤</h3>
+            <button class="btn btn-primary btn-sm" onclick="openStepForm()">➕ 添加步骤</button>
+          </div>
+          <div id="scenarioStepsList"></div>
+        </div>
+
+        <!-- 添加步骤表单（默认隐藏） -->
+        <div id="stepForm" style="display:none;margin-top:16px;padding:16px;background:#f9fafb;border-radius:8px;border:1px solid #e5e7eb">
+          <h4 style="font-size:14px;font-weight:600;margin-bottom:12px">添加测试步骤</h4>
+
+          <!-- 快速选择：功能包含的接口 -->
+          <div id="routeQuickPicker" style="display:none;margin-bottom:12px">
+            <label style="font-size:12px;color:#6b7280;display:block;margin-bottom:4px">📋 从功能包接口快速选择</label>
+            <div id="routeQuickList" style="max-height:150px;overflow-y:auto;border:1px solid #e5e7eb;border-radius:6px;padding:6px;background:white"></div>
+          </div>
+
+          <div class="detail-row">
+            <label style="font-size:13px;font-weight:500;margin-bottom:4px">操作说明</label>
+            <input id="stepNote" placeholder="如：使用会长账号修改自己创建的工会资料" style="width:100%;padding:8px;border:1px solid #d1d5db;border-radius:6px;font-size:13px" />
+          </div>
+
+          <div style="display:grid;grid-template-columns:80px 1fr;gap:8px;margin-top:8px">
+            <input id="stepMethod" placeholder="GET" style="padding:8px;border:1px solid #d1d5db;border-radius:6px;font-size:13px;text-transform:uppercase" />
+            <input id="stepPath" placeholder="/api/guilds" style="padding:8px;border:1px solid #d1d5db;border-radius:6px;font-size:13px" />
+          </div>
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:8px">
+            <input id="stepAuthRole" placeholder="角色（如：会长、普通用户）" style="padding:8px;border:1px solid #d1d5db;border-radius:6px;font-size:13px" />
+            <input id="stepSortOrder" placeholder="排序（数字）" type="number" style="padding:8px;border:1px solid #d1d5db;border-radius:6px;font-size:13px" />
+          </div>
+          <textarea id="stepRequestBody" placeholder="请求体（JSON）" style="width:100%;padding:8px;border:1px solid #d1d5db;border-radius:6px;font-size:13px;min-height:50px;margin-top:8px;resize:vertical"></textarea>
+          <textarea id="stepExpected" placeholder="预期结果" style="width:100%;padding:8px;border:1px solid #d1d5db;border-radius:6px;font-size:13px;min-height:50px;margin-top:8px;resize:vertical"></textarea>
+          <div style="display:flex;gap:8px;margin-top:12px;justify-content:flex-end">
+            <button class="btn btn-secondary btn-sm" onclick="closeStepForm()">取消</button>
+            <button class="btn btn-primary btn-sm" onclick="saveStep()">保存步骤</button>
+          </div>
+        </div>
+
+        <!-- 测试运行记录 -->
+        <div style="margin-top:24px">
+          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px">
+            <h3 style="font-size:16px;font-weight:600">🏃 测试记录</h3>
+            <button class="btn btn-primary btn-sm" onclick="openRunForm()">➕ 记录结果</button>
+          </div>
+          <div id="scenarioRunsList"></div>
+        </div>
+
+        <!-- 记录结果表单（默认隐藏） -->
+        <div id="runForm" style="display:none;margin-top:16px;padding:16px;background:#f9fafb;border-radius:8px;border:1px solid #e5e7eb">
+          <h4 style="font-size:14px;font-weight:600;margin-bottom:12px">记录测试结果</h4>
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
+            <input id="runTester" placeholder="测试人" style="padding:8px;border:1px solid #d1d5db;border-radius:6px;font-size:13px" />
+            <select id="runStatus" style="padding:8px;border:1px solid #d1d5db;border-radius:6px;font-size:13px">
+              <option value="passed">🟢 通过</option>
+              <option value="failed">🔴 失败</option>
+              <option value="blocked">🚫 阻塞</option>
+              <option value="pending">⏳ 待定</option>
+            </select>
+          </div>
+          <textarea id="runActual" placeholder="实际结果" style="width:100%;padding:8px;border:1px solid #d1d5db;border-radius:6px;font-size:13px;min-height:50px;margin-top:8px;resize:vertical"></textarea>
+          <textarea id="runNote" placeholder="备注" style="width:100%;padding:8px;border:1px solid #d1d5db;border-radius:6px;font-size:13px;min-height:50px;margin-top:8px;resize:vertical"></textarea>
+          <div style="display:flex;gap:8px;margin-top:12px;justify-content:flex-end">
+            <button class="btn btn-secondary btn-sm" onclick="closeRunForm()">取消</button>
+            <button class="btn btn-primary btn-sm" onclick="saveRun()">保存结果</button>
+          </div>
         </div>
       </div>
     </div>

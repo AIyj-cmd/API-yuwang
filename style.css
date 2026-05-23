@@ -274,3 +274,53 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-
 .lifecycle-select { padding: 4px 8px; border: 1px solid #d1d5db; border-radius: 6px; font-size: 12px; cursor: pointer; }
 .lifecycle-warning { display: flex; align-items: center; gap: 10px; padding: 12px 16px; background: #fef2f2; border: 1px solid #fecaca; border-radius: 10px; margin-bottom: 10px; font-size: 13px; color: #991b1b; }
 .lifecycle-warning .warn-icon { font-size: 18px; }
+
+/* ===== 验收场景 ===== */
+.scenario-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap: 16px; }
+.scenario-card { background: white; border-radius: 12px; border: 1px solid #e5e7eb; padding: 20px; transition: all 0.2s; cursor: pointer; }
+.scenario-card:hover { border-color: #3b82f6; box-shadow: 0 4px 12px rgba(59, 130, 246, 0.1); }
+.scenario-card-header { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 12px; }
+.scenario-card-title { font-size: 16px; font-weight: 600; color: #1f2937; flex: 1; }
+.scenario-card-badge { padding: 4px 10px; border-radius: 6px; font-size: 12px; font-weight: 500; }
+.scenario-card-badge.draft { background: #e5e7eb; color: #374151; }
+.scenario-card-badge.ready { background: #dbeafe; color: #1d4ed8; }
+.scenario-card-badge.passed { background: #d1fae5; color: #065f46; }
+.scenario-card-badge.failed { background: #fee2e2; color: #991b1b; }
+.scenario-card-badge.blocked { background: #fef3c7; color: #92400e; }
+.scenario-card-feature { display: inline-block; padding: 2px 8px; background: #f3f4f6; border-radius: 4px; font-size: 12px; color: #6b7280; margin-bottom: 8px; }
+.scenario-card-desc { font-size: 13px; color: #6b7280; line-height: 1.5; margin-bottom: 12px; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.scenario-card-meta { display: flex; gap: 16px; font-size: 12px; color: #9ca3af; }
+.scenario-card-meta span { display: flex; align-items: center; gap: 4px; }
+.scenario-card-actions { display: flex; gap: 8px; margin-top: 12px; padding-top: 12px; border-top: 1px solid #f3f4f6; }
+.scenario-detail-info { padding: 16px; background: #f9fafb; border-radius: 8px; border: 1px solid #e5e7eb; }
+.scenario-detail-info .info-row { display: flex; gap: 8px; margin-bottom: 8px; font-size: 14px; }
+.scenario-detail-info .info-row:last-child { margin-bottom: 0; }
+.scenario-detail-info .info-label { font-weight: 600; color: #374151; min-width: 80px; }
+.scenario-detail-info .info-value { color: #6b7280; flex: 1; }
+.step-item { display: flex; align-items: flex-start; gap: 12px; padding: 12px; background: white; border: 1px solid #e5e7eb; border-radius: 8px; margin-bottom: 8px; }
+.step-item:hover { border-color: #d1d5db; }
+.step-number { width: 28px; height: 28px; display: flex; align-items: center; justify-content: center; background: #3b82f6; color: white; border-radius: 50%; font-size: 12px; font-weight: 600; flex-shrink: 0; }
+.step-content { flex: 1; }
+.step-header { display: flex; align-items: center; gap: 8px; margin-bottom: 4px; }
+.step-method { padding: 2px 8px; background: #10b981; color: white; border-radius: 4px; font-size: 11px; font-weight: 600; text-transform: uppercase; }
+.step-method.GET { background: #3b82f6; }
+.step-method.POST { background: #10b981; }
+.step-method.PUT { background: #f59e0b; }
+.step-method.PATCH { background: #8b5cf6; }
+.step-method.DELETE { background: #ef4444; }
+.step-path { font-size: 13px; font-family: monospace; color: #1f2937; }
+.step-meta { font-size: 12px; color: #9ca3af; margin-top: 4px; }
+.step-expected { font-size: 12px; color: #6b7280; margin-top: 4px; padding: 6px 8px; background: #f9fafb; border-radius: 4px; }
+.step-actions { display: flex; gap: 4px; flex-shrink: 0; }
+.run-item { display: flex; align-items: flex-start; gap: 12px; padding: 12px; background: white; border: 1px solid #e5e7eb; border-radius: 8px; margin-bottom: 8px; }
+.run-status-icon { width: 28px; height: 28px; display: flex; align-items: center; justify-content: center; border-radius: 50%; font-size: 14px; flex-shrink: 0; }
+.run-status-icon.passed { background: #d1fae5; }
+.run-status-icon.failed { background: #fee2e2; }
+.run-status-icon.blocked { background: #fef3c7; }
+.run-status-icon.pending { background: #e5e7eb; }
+.run-content { flex: 1; }
+.run-header { display: flex; align-items: center; gap: 8px; margin-bottom: 4px; }
+.run-tester { font-size: 14px; font-weight: 500; color: #1f2937; }
+.run-time { font-size: 12px; color: #9ca3af; }
+.run-actual { font-size: 13px; color: #6b7280; margin-top: 4px; }
+.run-note { font-size: 12px; color: #9ca3af; margin-top: 4px; font-style: italic; }

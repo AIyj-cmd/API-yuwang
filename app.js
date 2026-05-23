@@ -227,6 +227,7 @@ async function loadData() {
     renderDashboard();
     renderList();
     if (currentTab === 'features') renderCategories();
+    initScenarios();
   } catch (err) {
     console.error('加载失败:', err);
   }
@@ -2711,4 +2712,562 @@ function exportPrereleaseMarkdown() {
   a.click();
   URL.revokeObjectURL(url);
   showToast('✅ Markdown 已下载');
+}
+
+// ===== 验收场景管理 =====
+let currentScenarioId = null;
+
+const STATUS_LABELS = {
+  draft: { emoji: '📝', label: '草稿' },
+  ready: { emoji: '✅', label: '就绪' },
+  passed: { emoji: '🟢', label: '通过' },
+  failed: { emoji: '🔴', label: '失败' },
+  blocked: { emoji: '🚫', label: '阻塞' },
+  pending: { emoji: '⏳', label: '待定' }
+};
+
+async function loadScenarios() {
+  const featureKey = document.getElementById('scenarioFilterFeature').value;
+  const status = document.getElementById('scenarioFilterStatus').value;
+  const params = new URLSearchParams();
+  if (featureKey) params.set('feature_key', featureKey);
+  if (status) params.set('status', status);
+
+  try {
+    const res = await fetch(`/api/test-scenarios?${params}`);
+    const data = await res.json();
+    renderScenarioList(data.scenarios || []);
+  } catch (e) {
+    console.error('加载场景失败:', e);
+  }
+}
+
+function renderScenarioList(scenarios) {
+  const container = document.getElementById('scenarioList');
+  if (scenarios.length === 0) {
+    container.innerHTML = '<div style="text-align:center;padding:60px;color:#9ca3af;font-size:15px">🧪 暂无验收场景，点击右上角「新建场景」开始创建</div>';
+    return;
+  }
+
+  container.innerHTML = scenarios.map(s => {
+    const statusInfo = STATUS_LABELS[s.status] || STATUS_LABELS.draft;
+    return `
+      <div class="scenario-card" onclick="openScenarioDetail('${s.id}')">
+        <div class="scenario-card-header">
+          <div class="scenario-card-title">${escapeHtml(s.name)}</div>
+          <span class="scenario-card-badge ${s.status}">${statusInfo.emoji} ${statusInfo.label}</span>
+        </div>
+        <div class="scenario-card-feature">${escapeHtml(s.feature_key)}</div>
+        ${s.description ? `<div class="scenario-card-desc">${escapeHtml(s.description)}</div>` : ''}
+        <div class="scenario-card-meta">
+          <span>📝 ${s.steps_count || 0} 步骤</span>
+          <span>🏃 ${s.runs_count || 0} 次运行</span>
+        </div>
+        <div class="scenario-card-actions">
+          <button class="btn btn-secondary btn-sm" onclick="event.stopPropagation();editScenario('${s.id}')">✏️ 编辑</button>
+          <button class="btn btn-danger btn-sm" onclick="event.stopPropagation();deleteScenario('${s.id}')">🗑️ 删除</button>
+        </div>
+      </div>
+    `;
+  }).join('');
+}
+
+function openScenarioModal(editData = null) {
+  document.getElementById('scenarioModalTitle').textContent = editData ? '✏️ 编辑验收场景' : '➕ 新建验收场景';
+  document.getElementById('scenarioName').value = editData?.name || '';
+  document.getElementById('scenarioDesc').value = editData?.description || '';
+  document.getElementById('scenarioPrecond').value = editData?.preconditions || '';
+  document.getElementById('scenarioModal').style.display = 'flex';
+  document.getElementById('scenarioModal').dataset.editId = editData?.id || '';
+
+  // 加载功能包列表到下拉框
+  loadFeaturePacksForSelect(editData?.feature_key);
+}
+
+async function loadFeaturePacksForSelect(selectedKey) {
+  const select = document.getElementById('scenarioFeatureKey');
+  select.innerHTML = '<option value="">请选择功能包</option>';
+  try {
+    const res = await fetch('/api/feature-packs');
+    const data = await res.json();
+    (data.packs || []).forEach(p => {
+      const opt = document.createElement('option');
+      opt.value = p.name;
+      opt.textContent = `${p.name}（${p.description || '无描述'}）`;
+      if (p.name === selectedKey) opt.selected = true;
+      select.appendChild(opt);
+    });
+  } catch {}
+}
+
+function closeScenarioModal() {
+  document.getElementById('scenarioModal').style.display = 'none';
+  document.getElementById('scenarioModal').dataset.editId = '';
+}
+
+async function saveScenario() {
+  const editId = document.getElementById('scenarioModal').dataset.editId;
+  const payload = {
+    feature_key: document.getElementById('scenarioFeatureKey').value.trim(),
+    name: document.getElementById('scenarioName').value.trim(),
+    description: document.getElementById('scenarioDesc').value.trim(),
+    preconditions: document.getElementById('scenarioPrecond').value.trim()
+  };
+
+  if (!payload.feature_key || !payload.name) {
+    showToast('❌ 功能包和场景名称必填', 'error');
+    return;
+  }
+
+  try {
+    const url = editId ? `/api/test-scenarios/${editId}` : '/api/test-scenarios';
+    const method = editId ? 'PATCH' : 'POST';
+    const res = await fetch(url, {
+      method,
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload)
+    });
+    const data = await res.json();
+    if (data.success === false) throw new Error(data.message);
+    closeScenarioModal();
+    loadScenarios();
+    showToast(editId ? '✅ 场景已更新' : '✅ 场景已创建');
+  } catch (e) {
+    showToast(`❌ ${e.message}`, 'error');
+  }
+}
+
+async function editScenario(id) {
+  try {
+    const res = await fetch(`/api/test-scenarios/${id}`);
+    const data = await res.json();
+    openScenarioModal(data.scenario);
+  } catch (e) {
+    showToast('❌ 获取场景详情失败', 'error');
+  }
+}
+
+async function deleteScenario(id) {
+  if (!confirm('确定删除此场景？关联的步骤和运行记录也会一并删除。')) return;
+  try {
+    const res = await fetch(`/api/test-scenarios/${id}`, { method: 'DELETE' });
+    const data = await res.json();
+    if (data.success === false) throw new Error(data.message);
+    loadScenarios();
+    showToast('✅ 场景已删除');
+  } catch (e) {
+    showToast(`❌ ${e.message}`, 'error');
+  }
+}
+
+async function openScenarioDetail(id) {
+  currentScenarioId = id;
+  try {
+    const res = await fetch(`/api/test-scenarios/${id}`);
+    const data = await res.json();
+    const s = data.scenario;
+    const statusInfo = STATUS_LABELS[s.status] || STATUS_LABELS.draft;
+
+    document.getElementById('scenarioDetailTitle').textContent = `📋 ${s.name}`;
+    document.getElementById('scenarioDetailInfo').innerHTML = `
+      <div class="info-row"><span class="info-label">功能包</span><span class="info-value">${escapeHtml(s.feature_key)}</span></div>
+      <div class="info-row"><span class="info-label">状态</span><span class="info-value"><span class="scenario-card-badge ${s.status}">${statusInfo.emoji} ${statusInfo.label}</span></span></div>
+      ${s.description ? `<div class="info-row"><span class="info-label">描述</span><span class="info-value">${escapeHtml(s.description)}</span></div>` : ''}
+      ${s.preconditions ? `<div class="info-row"><span class="info-label">前置条件</span><span class="info-value">${escapeHtml(s.preconditions)}</span></div>` : ''}
+      <div class="info-row"><span class="info-label">更新时间</span><span class="info-value">${new Date(s.updated_at).toLocaleString('zh-CN')}</span></div>
+    `;
+
+    renderSteps(s.steps || []);
+    renderRuns(s.runs || []);
+    closeStepForm();
+    closeRunForm();
+    document.getElementById('scenarioDetailModal').style.display = 'flex';
+  } catch (e) {
+    showToast('❌ 获取场景详情失败', 'error');
+  }
+}
+
+function closeScenarioDetailModal() {
+  document.getElementById('scenarioDetailModal').style.display = 'none';
+  currentScenarioId = null;
+}
+
+function renderSteps(steps) {
+  const container = document.getElementById('scenarioStepsList');
+  if (steps.length === 0) {
+    container.innerHTML = '<div style="text-align:center;padding:20px;color:#9ca3af;font-size:13px">暂无测试步骤</div>';
+    return;
+  }
+  const sorted = [...steps].sort((a, b) => a.sort_order - b.sort_order);
+  container.innerHTML = sorted.map((st, i) => `
+    <div class="step-item">
+      <div class="step-number">${i + 1}</div>
+      <div class="step-content">
+        ${st.note ? `<div style="font-size:14px;font-weight:500;color:#1f2937;margin-bottom:4px">${escapeHtml(st.note)}</div>` : ''}
+        <div class="step-header">
+          <span class="step-method ${st.method}">${st.method}</span>
+          <span class="step-path">${escapeHtml(st.path)}</span>
+        </div>
+        ${st.auth_role ? `<div class="step-meta">角色: ${escapeHtml(st.auth_role)}</div>` : ''}
+        ${st.expected_result ? `<div class="step-expected">预期: ${escapeHtml(st.expected_result)}</div>` : ''}
+      </div>
+      <div class="step-actions">
+        <button class="btn btn-primary btn-sm" onclick="runStep('${st.method}', '${st.path.replace(/'/g, "\\'")}', '${st.id}')" title="模拟执行">▶</button>
+        <button class="btn btn-danger btn-sm" onclick="deleteStep('${st.id}')">🗑️</button>
+      </div>
+    </div>
+  `).join('');
+}
+
+function renderRuns(runs) {
+  const container = document.getElementById('scenarioRunsList');
+  if (runs.length === 0) {
+    container.innerHTML = '<div style="text-align:center;padding:20px;color:#9ca3af;font-size:13px">暂无测试记录</div>';
+    return;
+  }
+  container.innerHTML = runs.map(r => {
+    const statusInfo = STATUS_LABELS[r.status] || STATUS_LABELS.pending;
+    const statusIcons = { passed: '✓', failed: '✗', blocked: '⊘', pending: '?' };
+    return `
+      <div class="run-item">
+        <div class="run-status-icon ${r.status}">${statusIcons[r.status] || '?'}</div>
+        <div class="run-content">
+          <div class="run-header">
+            <span class="run-tester">${escapeHtml(r.tester_name || '匿名')}</span>
+            <span class="scenario-card-badge ${r.status}" style="font-size:11px">${statusInfo.emoji} ${statusInfo.label}</span>
+            <span class="run-time">${new Date(r.created_at).toLocaleString('zh-CN')}</span>
+          </div>
+          ${r.actual_result ? `<div class="run-actual">${escapeHtml(r.actual_result)}</div>` : ''}
+          ${r.note ? `<div class="run-note">💬 ${escapeHtml(r.note)}</div>` : ''}
+        </div>
+      </div>
+    `;
+  }).join('');
+}
+
+function openStepForm() {
+  document.getElementById('stepForm').style.display = 'block';
+  document.getElementById('stepMethod').value = '';
+  document.getElementById('stepPath').value = '';
+  document.getElementById('stepAuthRole').value = '';
+  document.getElementById('stepSortOrder').value = '';
+  document.getElementById('stepRequestBody').value = '';
+  document.getElementById('stepExpected').value = '';
+  document.getElementById('stepNote').value = '';
+
+  // 加载功能包接口列表
+  loadRouteQuickPicker();
+}
+
+async function loadRouteQuickPicker() {
+  const picker = document.getElementById('routeQuickPicker');
+  const list = document.getElementById('routeQuickList');
+
+  // 获取当前场景的功能包
+  const scenarioRes = await fetch(`/api/test-scenarios/${currentScenarioId}`);
+  const scenarioData = await scenarioRes.json();
+  const featureKey = scenarioData.scenario?.feature_key;
+
+  if (!featureKey) {
+    picker.style.display = 'none';
+    return;
+  }
+
+  // 获取功能包详情
+  try {
+    const packsRes = await fetch('/api/feature-packs');
+    const packsData = await packsRes.json();
+    const pack = (packsData.packs || []).find(p => p.name === featureKey);
+
+    if (!pack || !pack.routes || pack.routes.length === 0) {
+      picker.style.display = 'none';
+      return;
+    }
+
+    picker.style.display = 'block';
+    list.innerHTML = pack.routes.map(r => `
+      <div style="display:flex;align-items:center;gap:8px;padding:4px 6px;cursor:pointer;border-radius:4px;font-size:12px;hover:background:#f3f4f6"
+           onmouseover="this.style.background='#f3f4f6'"
+           onmouseout="this.style.background='white'"
+           onclick="pickRoute('${r.method}', '${r.path.replace(/'/g, "\\'")}', '${(r.name || '').replace(/'/g, "\\'")}', '${r.authType || 'user'}')">
+        <span class="step-method ${r.method}" style="font-size:10px;padding:1px 6px">${r.method}</span>
+        <code style="flex:1;font-size:11px;color:#374151">${r.path}</code>
+        <span style="color:#9ca3af;font-size:11px">${r.name || ''}</span>
+      </div>
+    `).join('');
+  } catch {
+    picker.style.display = 'none';
+  }
+}
+
+function pickRoute(method, path, name, authType) {
+  document.getElementById('stepMethod').value = method;
+  // 把 :id 参数转成 {{变量名}} 格式
+  const filledPath = path.replace(/:(\w+)/g, (_, param) => `{{${param}}}`);
+  document.getElementById('stepPath').value = filledPath;
+
+  // 根据 authType 自动填角色
+  const roleMap = { admin: '管理员', user: '普通用户', anonymous: '匿名' };
+  const role = roleMap[authType] || '';
+  document.getElementById('stepAuthRole').value = role;
+
+  // 生成操作说明
+  const note = generateNote(method, path, name, role);
+  document.getElementById('stepNote').value = note;
+
+  // 根据 method 和 path 生成请求体示例
+  const body = generateRequestBody(method, path, name);
+  document.getElementById('stepRequestBody').value = body;
+
+  // 生成预期结果模板
+  const expected = generateExpectedResult(method, path, name);
+  document.getElementById('stepExpected').value = expected;
+}
+
+function generateNote(method, path, name, role) {
+  const actionMap = {
+    'GET': '查询',
+    'POST': '创建/提交',
+    'PATCH': '修改',
+    'PUT': '更新',
+    'DELETE': '删除'
+  };
+  const action = actionMap[method] || '操作';
+
+  if (path.includes(':id') && !path.endsWith(':id')) {
+    // 子资源操作，如 /api/guilds/:id/members
+    const parts = path.split('/');
+    const subResource = parts[parts.length - 1];
+    return `使用${role || '用户'}账号${action}${subResource}`;
+  }
+
+  if (name) {
+    return `使用${role || '用户'}账号${name}`;
+  }
+
+  return `使用${role || '用户'}账号${action}资源`;
+}
+
+function generateRequestBody(method, path, name) {
+  if (method === 'GET' || method === 'DELETE') return '';
+
+  // 根据路径和名称推断请求体
+  const templates = {
+    'guilds': { name: '摸鱼地下研究所', description: '专注研究工位精神状态的工会', icon: '研' },
+    'guild': { name: '摸鱼地下研究所', description: '专注研究工位精神状态的工会', icon: '研' },
+    'records': { activityText: '带薪发呆', duration: '30min', risk: 'low', disguise: 'phone', creativity: 'high', description: '今天开会时成功摸鱼30分钟' },
+    'comments': { content: '这条记录太真实了！' },
+    'groups': { name: '摸鱼小分队', description: '几个人的秘密摸鱼群', visibility: 'public' },
+    'circles': { name: '带薪如厕', description: '专注研究带薪如厕的艺术' },
+    'users': { displayName: '摸鱼达人', bio: '专业摸鱼20年' },
+    'settings': { communityOpen: true, commentsOpen: true },
+    'reports': { reason: '疑似包含未匿名化信息' },
+    'topics': { name: '今日摸鱼' }
+  };
+
+  // 匹配路径中的关键词
+  for (const [key, template] of Object.entries(templates)) {
+    if (path.includes(key)) {
+      return JSON.stringify(template, null, 2);
+    }
+  }
+
+  // 通用模板
+  if (name.includes('创建') || name.includes('新建')) {
+    return '{\n  \n}';
+  }
+  if (name.includes('编辑') || name.includes('修改') || name.includes('更新')) {
+    return '{\n  \n}';
+  }
+  return '';
+}
+
+function generateExpectedResult(method, path, name) {
+  const pathParts = path.split('/').filter(Boolean);
+  const resource = pathParts[pathParts.length - 1] === ':id'
+    ? pathParts[pathParts.length - 2]
+    : pathParts[pathParts.length - 1];
+
+  const resourceNames = {
+    guilds: '工会', records: '记录', comments: '评论', groups: '小组',
+    circles: '圈子', users: '用户', settings: '配置', reports: '举报',
+    topics: '话题', wallets: '钱包'
+  };
+  const resourceName = resourceNames[resource] || resource;
+
+  if (method === 'GET') {
+    if (path.includes(':id')) {
+      return `返回 200；返回 ${resourceName} 详情数据`;
+    }
+    return `返回 200；返回 ${resourceName} 列表`;
+  }
+  if (method === 'POST') {
+    if (name.includes('离开') || name.includes('退出')) {
+      return `返回 200；成功退出 ${resourceName}`;
+    }
+    if (name.includes('删除') || name.includes('移除')) {
+      return `返回 200；成功移除`;
+    }
+    return `返回 201；${resourceName} 创建成功`;
+  }
+  if (method === 'PATCH' || method === 'PUT') {
+    return `返回 200；${resourceName} 更新成功`;
+  }
+  if (method === 'DELETE') {
+    return `返回 200；${resourceName} 删除成功`;
+  }
+  return '返回 200';
+}
+
+async function runStep(method, path, stepId) {
+  const btn = event.target;
+  const originalText = btn.textContent;
+  btn.textContent = '⏳';
+  btn.disabled = true;
+
+  try {
+    const res = await fetch('/api/proxy', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        targetMethod: method,
+        targetPath: path,
+        dryRun: false
+      })
+    });
+    const data = await res.json();
+
+    if (data.success) {
+      const result = `✅ 模拟执行成功\n状态码: ${data.simulatedStatus || 200}\n响应: ${JSON.stringify(data.simulatedResponse || data.response || {}, null, 2).slice(0, 500)}`;
+
+      // 自动打开记录结果表单并填入
+      openRunForm();
+      document.getElementById('runActual').value = result;
+      document.getElementById('runStatus').value = 'passed';
+      showToast('✅ 模拟执行成功，结果已填入');
+    } else {
+      const result = `❌ 模拟执行失败\n${data.message || '未知错误'}`;
+      openRunForm();
+      document.getElementById('runActual').value = result;
+      document.getElementById('runStatus').value = 'failed';
+      showToast('❌ ' + (data.message || '执行失败'), 'error');
+    }
+  } catch (e) {
+    const result = `❌ 请求异常\n${e.message}`;
+    openRunForm();
+    document.getElementById('runActual').value = result;
+    document.getElementById('runStatus').value = 'failed';
+    showToast('❌ ' + e.message, 'error');
+  } finally {
+    btn.textContent = originalText;
+    btn.disabled = false;
+  }
+}
+
+function closeStepForm() {
+  document.getElementById('stepForm').style.display = 'none';
+}
+
+async function saveStep() {
+  const payload = {
+    method: document.getElementById('stepMethod').value.trim().toUpperCase(),
+    path: document.getElementById('stepPath').value.trim(),
+    auth_role: document.getElementById('stepAuthRole').value.trim(),
+    sort_order: parseInt(document.getElementById('stepSortOrder').value) || undefined,
+    request_body: document.getElementById('stepRequestBody').value.trim(),
+    expected_result: document.getElementById('stepExpected').value.trim(),
+    note: document.getElementById('stepNote').value.trim()
+  };
+
+  if (!payload.method || !payload.path) {
+    showToast('❌ 请求方法和路径必填', 'error');
+    return;
+  }
+
+  try {
+    const res = await fetch(`/api/test-scenarios/${currentScenarioId}/steps`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload)
+    });
+    const data = await res.json();
+    if (data.success === false) throw new Error(data.message);
+    closeStepForm();
+    openScenarioDetail(currentScenarioId);
+    showToast('✅ 步骤已添加');
+  } catch (e) {
+    showToast(`❌ ${e.message}`, 'error');
+  }
+}
+
+async function deleteStep(stepId) {
+  if (!confirm('确定删除此步骤？')) return;
+  try {
+    const res = await fetch(`/api/test-scenarios/${currentScenarioId}/steps/${stepId}`, { method: 'DELETE' });
+    const data = await res.json();
+    if (data.success === false) throw new Error(data.message);
+    openScenarioDetail(currentScenarioId);
+    showToast('✅ 步骤已删除');
+  } catch (e) {
+    showToast(`❌ ${e.message}`, 'error');
+  }
+}
+
+function openRunForm() {
+  document.getElementById('runForm').style.display = 'block';
+  document.getElementById('runTester').value = '';
+  document.getElementById('runStatus').value = 'passed';
+  document.getElementById('runActual').value = '';
+  document.getElementById('runNote').value = '';
+}
+
+function closeRunForm() {
+  document.getElementById('runForm').style.display = 'none';
+}
+
+async function saveRun() {
+  const payload = {
+    tester_name: document.getElementById('runTester').value.trim(),
+    status: document.getElementById('runStatus').value,
+    actual_result: document.getElementById('runActual').value.trim(),
+    note: document.getElementById('runNote').value.trim()
+  };
+
+  try {
+    const res = await fetch(`/api/test-scenarios/${currentScenarioId}/runs`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload)
+    });
+    const data = await res.json();
+    if (data.success === false) throw new Error(data.message);
+    closeRunForm();
+    openScenarioDetail(currentScenarioId);
+    showToast('✅ 测试结果已记录');
+  } catch (e) {
+    showToast(`❌ ${e.message}`, 'error');
+  }
+}
+
+function escapeHtml(text) {
+  const div = document.createElement('div');
+  div.textContent = text;
+  return div.innerHTML;
+}
+
+// 初始化加载场景列表
+async function initScenarios() {
+  // 加载功能包列表到过滤器
+  try {
+    const res = await fetch('/api/feature-packs');
+    const data = await res.json();
+    const select = document.getElementById('scenarioFilterFeature');
+    (data.packs || []).forEach(p => {
+      const opt = document.createElement('option');
+      opt.value = p.id;
+      opt.textContent = p.name;
+      select.appendChild(opt);
+    });
+  } catch {}
+  loadScenarios();
 }
