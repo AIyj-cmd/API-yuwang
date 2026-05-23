@@ -31,6 +31,7 @@ const API_MANAGER_SESSION_SECRET = process.env.API_MANAGER_SESSION_SECRET || '';
 const CLAUDE_TASK_DRAFTS_PATH = join(__dirname, 'claude-task-drafts.json');
 const FEATURE_PACKS_PATH = join(__dirname, 'feature-packs.json');
 const TEST_RECORDS_PATH = join(__dirname, 'test-records.json');
+const API_TEST_SCENARIOS_PATH = join(__dirname, 'api-test-scenarios.json');
 const API_MANAGER_ENABLE_AI_TASKS = process.env.API_MANAGER_ENABLE_AI_TASKS === 'true';
 const DEEPSEEK_API_KEY = process.env.DEEPSEEK_API_KEY || '';
 const DEEPSEEK_BASE_URL = process.env.DEEPSEEK_BASE_URL || 'https://api.deepseek.com';
@@ -99,7 +100,7 @@ function toGovernance(route) {
     description: route.description || '',
     customDescription: route.customDescription ?? route.description ?? '',
     tags: route.tags || [],
-    frontendStatus: route.frontendStatus || route.frontend_status || (path.startsWith('/api/admin/') ? 'admin_only' : path === '/api/health' ? 'internal' : 'needs_review'),
+    frontendStatus: route.frontendStatus || route.frontend_status || (path.startsWith('/api/admin/') ? 'admin_only' : path === '/api/health' ? 'internal' : 'planned'),
     accessOverride: route.accessOverride || null,
     riskOverride: route.riskOverride || null,
     reviewNote: route.reviewNote || '',
@@ -146,6 +147,8 @@ function loadFeaturePacks() { try { return JSON.parse(readFileSync(FEATURE_PACKS
 function saveFeaturePacks(packs) { writeFileSync(FEATURE_PACKS_PATH, JSON.stringify(packs, null, 2), 'utf-8'); }
 function loadTestRecords() { try { return JSON.parse(readFileSync(TEST_RECORDS_PATH, 'utf-8')); } catch { return {}; } }
 function saveTestRecords(records) { writeFileSync(TEST_RECORDS_PATH, JSON.stringify(records, null, 2), 'utf-8'); }
+function loadApiTestScenarios() { try { return JSON.parse(readFileSync(API_TEST_SCENARIOS_PATH, 'utf-8')); } catch { return []; } }
+function saveApiTestScenarios(scenarios) { writeFileSync(API_TEST_SCENARIOS_PATH, JSON.stringify(scenarios, null, 2), 'utf-8'); }
 function buildContextFromRoutes(routes, body = {}) {
   const allowUnreviewed = Boolean(body.allowUnreviewed);
   const targetClient = body.targetClient === 'admin' ? 'admin' : 'user';
@@ -657,6 +660,249 @@ const server = createServer(async (req, res) => {
       res.writeHead(500, {'Content-Type':'application/json'});
       res.end(JSON.stringify({ success: false, message: e.message }));
     }
+    return;
+  }
+
+  // ===== API Test Scenarios (业务验收场景) =====
+  const SCENARIO_STATUS_ENUM = ['draft', 'ready', 'passed', 'failed', 'blocked'];
+  const RUN_STATUS_ENUM = ['pending', ...SCENARIO_STATUS_ENUM];
+
+  // GET /api/test-scenarios — 列表查询
+  if (path === '/api/test-scenarios' && method === 'GET') {
+    const scenarios = loadApiTestScenarios();
+    const featureKey = url.searchParams.get('feature_key') || '';
+    const status = url.searchParams.get('status') || '';
+    let filtered = scenarios;
+    if (featureKey) filtered = filtered.filter(s => s.feature_key === featureKey);
+    if (status) filtered = filtered.filter(s => s.status === status);
+    // 返回时不含 steps 和 runs 的详细内容，只给数量
+    const list = filtered.map(s => ({
+      ...s,
+      steps_count: (s.steps || []).length,
+      runs_count: (s.runs || []).length,
+      steps: undefined,
+      runs: undefined
+    }));
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ scenarios: list, total: list.length }));
+    return;
+  }
+
+  // POST /api/test-scenarios — 创建场景
+  if (path === '/api/test-scenarios' && method === 'POST') {
+    const body = await parseBody(req);
+    if (!body.feature_key || !body.name) {
+      res.writeHead(400, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ success: false, message: 'feature_key 和 name 必填' }));
+      return;
+    }
+    const scenarios = loadApiTestScenarios();
+    const now = new Date().toISOString();
+    const scenario = {
+      id: `scenario_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
+      feature_key: body.feature_key,
+      name: body.name,
+      description: body.description || '',
+      preconditions: body.preconditions || '',
+      status: 'draft',
+      steps: [],
+      runs: [],
+      created_at: now,
+      updated_at: now
+    };
+    scenarios.push(scenario);
+    saveApiTestScenarios(scenarios);
+    res.writeHead(201, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ scenario }));
+    return;
+  }
+
+  // 以下路由需要解析 :id 参数
+  const scenarioIdMatch = path.match(/^\/api\/test-scenarios\/([^/]+)$/);
+  const scenarioStepsMatch = path.match(/^\/api\/test-scenarios\/([^/]+)\/steps$/);
+  const scenarioRunsMatch = path.match(/^\/api\/test-scenarios\/([^/]+)\/runs$/);
+  const stepPatchMatch = path.match(/^\/api\/test-scenarios\/([^/]+)\/steps\/([^/]+)$/);
+
+  // GET /api/test-scenarios/:id — 场景详情
+  if (scenarioIdMatch && method === 'GET') {
+    const scenarios = loadApiTestScenarios();
+    const scenario = scenarios.find(s => s.id === scenarioIdMatch[1]);
+    if (!scenario) {
+      res.writeHead(404, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ success: false, message: '场景不存在' }));
+      return;
+    }
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ scenario }));
+    return;
+  }
+
+  // PATCH /api/test-scenarios/:id — 更新场景
+  if (scenarioIdMatch && method === 'PATCH') {
+    const body = await parseBody(req);
+    const scenarios = loadApiTestScenarios();
+    const idx = scenarios.findIndex(s => s.id === scenarioIdMatch[1]);
+    if (idx === -1) {
+      res.writeHead(404, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ success: false, message: '场景不存在' }));
+      return;
+    }
+    const scenario = scenarios[idx];
+    if (body.feature_key !== undefined) scenario.feature_key = body.feature_key;
+    if (body.name !== undefined) scenario.name = body.name;
+    if (body.description !== undefined) scenario.description = body.description;
+    if (body.preconditions !== undefined) scenario.preconditions = body.preconditions;
+    if (body.status !== undefined) {
+      if (!SCENARIO_STATUS_ENUM.includes(body.status)) {
+        res.writeHead(400, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ success: false, message: `状态必须是 ${SCENARIO_STATUS_ENUM.join('/')}` }));
+        return;
+      }
+      scenario.status = body.status;
+    }
+    scenario.updated_at = new Date().toISOString();
+    scenarios[idx] = scenario;
+    saveApiTestScenarios(scenarios);
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ scenario }));
+    return;
+  }
+
+  // DELETE /api/test-scenarios/:id — 删除场景（级联删 steps + runs）
+  if (scenarioIdMatch && method === 'DELETE') {
+    const scenarios = loadApiTestScenarios();
+    const idx = scenarios.findIndex(s => s.id === scenarioIdMatch[1]);
+    if (idx === -1) {
+      res.writeHead(404, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ success: false, message: '场景不存在' }));
+      return;
+    }
+    scenarios.splice(idx, 1);
+    saveApiTestScenarios(scenarios);
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ success: true }));
+    return;
+  }
+
+  // POST /api/test-scenarios/:id/steps — 添加步骤
+  if (scenarioStepsMatch && method === 'POST') {
+    const body = await parseBody(req);
+    if (!body.method || !body.path) {
+      res.writeHead(400, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ success: false, message: 'method 和 path 必填' }));
+      return;
+    }
+    const scenarios = loadApiTestScenarios();
+    const scenario = scenarios.find(s => s.id === scenarioStepsMatch[1]);
+    if (!scenario) {
+      res.writeHead(404, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ success: false, message: '场景不存在' }));
+      return;
+    }
+    const step = {
+      id: `step_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
+      sort_order: body.sort_order ?? (scenario.steps.length + 1),
+      method: body.method.toUpperCase(),
+      path: body.path,
+      auth_role: body.auth_role || '',
+      request_body: body.request_body || '',
+      expected_result: body.expected_result || ''
+    };
+    scenario.steps.push(step);
+    scenario.updated_at = new Date().toISOString();
+    saveApiTestScenarios(scenarios);
+    res.writeHead(201, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ step }));
+    return;
+  }
+
+  // PATCH /api/test-scenarios/:id/steps/:stepId — 修改步骤
+  if (stepPatchMatch && method === 'PATCH') {
+    const body = await parseBody(req);
+    const scenarios = loadApiTestScenarios();
+    const scenario = scenarios.find(s => s.id === stepPatchMatch[1]);
+    if (!scenario) {
+      res.writeHead(404, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ success: false, message: '场景不存在' }));
+      return;
+    }
+    const stepIdx = scenario.steps.findIndex(st => st.id === stepPatchMatch[2]);
+    if (stepIdx === -1) {
+      res.writeHead(404, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ success: false, message: '步骤不存在' }));
+      return;
+    }
+    const step = scenario.steps[stepIdx];
+    if (body.sort_order !== undefined) step.sort_order = body.sort_order;
+    if (body.method !== undefined) step.method = body.method.toUpperCase();
+    if (body.path !== undefined) step.path = body.path;
+    if (body.auth_role !== undefined) step.auth_role = body.auth_role;
+    if (body.request_body !== undefined) step.request_body = body.request_body;
+    if (body.expected_result !== undefined) step.expected_result = body.expected_result;
+    scenario.steps[stepIdx] = step;
+    scenario.updated_at = new Date().toISOString();
+    saveApiTestScenarios(scenarios);
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ step }));
+    return;
+  }
+
+  // DELETE /api/test-scenarios/:id/steps/:stepId — 删除步骤
+  if (stepPatchMatch && method === 'DELETE') {
+    const scenarios = loadApiTestScenarios();
+    const scenario = scenarios.find(s => s.id === stepPatchMatch[1]);
+    if (!scenario) {
+      res.writeHead(404, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ success: false, message: '场景不存在' }));
+      return;
+    }
+    const stepIdx = scenario.steps.findIndex(st => st.id === stepPatchMatch[2]);
+    if (stepIdx === -1) {
+      res.writeHead(404, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ success: false, message: '步骤不存在' }));
+      return;
+    }
+    scenario.steps.splice(stepIdx, 1);
+    scenario.updated_at = new Date().toISOString();
+    saveApiTestScenarios(scenarios);
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ success: true }));
+    return;
+  }
+
+  // POST /api/test-scenarios/:id/runs — 记录测试运行
+  if (scenarioRunsMatch && method === 'POST') {
+    const body = await parseBody(req);
+    const scenarios = loadApiTestScenarios();
+    const scenario = scenarios.find(s => s.id === scenarioRunsMatch[1]);
+    if (!scenario) {
+      res.writeHead(404, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ success: false, message: '场景不存在' }));
+      return;
+    }
+    const runStatus = body.status || 'pending';
+    if (!RUN_STATUS_ENUM.includes(runStatus)) {
+      res.writeHead(400, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ success: false, message: `状态必须是 ${RUN_STATUS_ENUM.join('/')}` }));
+      return;
+    }
+    const run = {
+      id: `run_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
+      tester_name: body.tester_name || '',
+      status: runStatus,
+      actual_result: body.actual_result || '',
+      note: body.note || '',
+      created_at: new Date().toISOString()
+    };
+    scenario.runs.push(run);
+    // 如果 run 状态是 passed/failed，同步更新场景状态
+    if (runStatus === 'passed' || runStatus === 'failed') {
+      scenario.status = runStatus;
+    }
+    scenario.updated_at = new Date().toISOString();
+    saveApiTestScenarios(scenarios);
+    res.writeHead(201, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ run }));
     return;
   }
 

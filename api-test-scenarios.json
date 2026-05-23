@@ -1,0 +1,14 @@
+[
+  {
+    "id": "scenario_1779528083421_cnazsw",
+    "feature_key": "工会系统",
+    "name": "工会功能",
+    "description": "",
+    "preconditions": "",
+    "status": "draft",
+    "steps": [],
+    "runs": [],
+    "created_at": "2026-05-23T09:21:23.421Z",
+    "updated_at": "2026-05-23T09:45:35.303Z"
+  }
+]
