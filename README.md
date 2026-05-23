@@ -128,7 +128,7 @@ server {
 | `/api/manager/auth/login` | POST | 无 | 管理员登录 |
 | `/api/manager/auth/logout` | POST | 无 | 登出 |
 | `/api/registry` | GET | 管理员 | 获取所有接口数据 |
-| `/api/modules` | GET | 无 | 获取模块配置（内置 + 自定义） |
+| `/api/modules` | GET | 管理员 | 获取模块配置（内置 + 自定义） |
 | `/api/modules` | POST | 管理员 | 添加自定义模块 |
 | `/api/scan` | GET | 管理员 | 扫描 yuwang 源码，返回新增接口 |
 | `/api/sync` | POST | 管理员 | 同步 registry 并重新整理 |
