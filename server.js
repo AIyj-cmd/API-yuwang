@@ -383,6 +383,7 @@ const server = createServer(async (req, res) => {
       const routeIds = routes.map(r=>r.route_id).sort();
       const id = `task_${Date.now()}`;
       const draft = { id, title: context.featureName, moduleKey: routes[0].module || 'other', targetClient: context.targetClient, routeIds, source:'template', modelName:null, structuredContext:context, generatedPrompt, status:'draft', createdAt:now, updatedAt:now };
+      const drafts = loadClaudeTaskDrafts(); drafts.push(draft); saveClaudeTaskDrafts(drafts);
       res.writeHead(200, {'Content-Type':'application/json'}); res.end(JSON.stringify({ success:true, draft }));
     } catch (e) { res.writeHead(400, {'Content-Type':'application/json'}); res.end(JSON.stringify({ success:false, message:e.message })); }
     return;
@@ -401,6 +402,7 @@ const server = createServer(async (req, res) => {
       const routeIds = routes.map(r=>r.route_id).sort();
       const id = `task_${Date.now()}`;
       const draft = { id, title: context.featureName, moduleKey: routes[0].module || 'other', targetClient: context.targetClient, routeIds, source:'deepseek', modelName:DEEPSEEK_MODEL, structuredContext:context, generatedPrompt, status:'draft', createdAt:now, updatedAt:now };
+      const drafts = loadClaudeTaskDrafts(); drafts.push(draft); saveClaudeTaskDrafts(drafts);
       res.writeHead(200, {'Content-Type':'application/json'}); res.end(JSON.stringify({ success:true, draft }));
     } catch (e) { res.writeHead(400, {'Content-Type':'application/json'}); res.end(JSON.stringify({ success:false, message:e.message })); }
     return;
