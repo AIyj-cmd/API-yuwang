@@ -953,7 +953,7 @@ async function loadManagerConfig() {
 
 
 
-checkAuth().then(ok => { if (ok) { loadData(); loadManagerConfig(); } });
+checkAuth().then(ok => { if (ok) { hideLoginPage(); loadData(); loadManagerConfig(); } });
 
 // ===== Claude 任务生成器 - 独立页面 =====
 function renderClaudeRouteList() {
