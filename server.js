@@ -274,7 +274,7 @@ const server = createServer(async (req, res) => {
     res.writeHead(200, {'Content-Type':'application/json'}); res.end(JSON.stringify({success:true})); return;
   }
 
-  if (path.startsWith('/api/') && !path.startsWith('/api/manager/auth/') && path !== '/api/manager/config' && !requireAdmin(req, res)) return;
+  if (path.startsWith('/api/') && !path.startsWith('/api/manager/auth/') && !requireAdmin(req, res)) return;
 
   if (path === '/api/registry' && method === 'GET') {
     const routes = loadApiRegistry();
