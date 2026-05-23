@@ -1,1 +1,141 @@
-[]
+[
+  {
+    "id": "task_1779503274144",
+    "title": "前端任务接入",
+    "generatedPrompt": "# 前端任务：用户端圈子功能接入\n\n## 任务目标\n在用户前台（非管理后台）中接入以下 5 个圈子相关 API，完成从 API 函数定义到页面交互的全部前端实现。\n\n## 需接入的接口\n\n| 序号 | 方法   | 路径                      | 认证要求 | 说明               |\n|------|--------|---------------------------|----------|--------------------|\n| 1    | GET    | `/api/circles`            | 用户登录 | 获取圈子列表       |\n| 2    | GET    | `/api/circles/:id`        | 用户登录 | 获取圈子详情       |\n| 3    | POST   | `/api/circles/:id/join`   | 用户登录 | 加入圈子           |\n| 4    | GET    | `/api/circles/:id/feed`   | 用户登录 | 获取圈子动态       |\n| 5    | GET    | `/api/circles/:id/ranking`| 公开     | 获取圈子排名       |\n\n所有接口均为后端已提供的真实接口，禁止新增或修改后端接口，禁止在前端 mock 数据。\n\n## 实现内容\n\n### 1. 创建或扩展 API 服务层\n- 在 `src/api/circles.ts` 或项目已有的 `api.ts` 中定义与上述 5 个接口对应的请求函数。\n- 使用项目通用的 HTTP 客户端（如 axios 实例）发送请求，自动附加认证 Token。\n- 为请求和响应定义 TypeScript 类型（如 `Circle[]`, `CircleDetail`, `JoinResult`, `FeedItem[]`, `RankingItem[]` 等）。\n- 必须处理网络异常、服务端错误，统一返回可区分的状态（成功/失败/未授权），不得让页面直接崩溃。\n\n### 2. 实现用户前台页面\n\n#### a. 圈子列表页\n- 调用 `GET /api/circles` 获取数据。\n- **Loading 状态**：使用骨架屏或 Spinner。\n- **Empty 状态**：当列表为空时，显示“暂无圈子”或类似提示，引导用户操作。\n- **Error 状态**：显示错误信息，并提供“重试”按钮。\n- **未登录状态**：当获取不到 Token 或接口返回 401 时，跳转至登录页或弹出登录引导，不可展示空白或错乱页面。\n- 列表项点击后导航至圈子详情页（路由可设计为 `/circles/:id`）。\n\n#### b. 圈子详情页\n- 通过路由参数 `:id` 分别调用以下接口：\n  - `GET /api/circles/:id` 获取圈子基本信息（名称、描述、当前用户是否已加入等）。\n  - `GET /api/circles/:id/feed` 获取动态流。\n  - `GET /api/circles/:id/ranking` 获取排名（公开，但依旧需处理加载/空/错误）。\n- 页面可包含多个分区或标签，对应展示详情、动态、排名。\n- **加入功能**：若详情接口返回 `isMember: false`，显示“加入圈子”按钮；点击后调用 `POST /api/circles/:id/join`。\n  - 加入成功：立即刷新详情数据（至少更新成员状态），并重新请求动态列表和排名，保证页面状态一致。\n  - 加入失败：展示具体错误提示（如“加入失败，请稍后重试”）。\n- 动态和排名同样需要处理 Loading / Empty / Error 状态。Empty 状态下显示“暂无动态”或“暂无排名数据”。\n- 排名接口为公开访问，无需令牌；但如果请求失败，同样要展示错误反馈。\n\n### 3. 全局状态与异常处理\n- 所有需要认证的接口在调用前检查登录状态。若用户未登录，应中断请求并引导登录。\n- 接口返回 401/403 时，统一清理无效 Token 并跳转登录页，不可出现未捕获的 Promise 错误。\n- 杜绝任何写死数据、前端 mock 接口或模拟后端行为。\n- 严禁调用 `/api/admin/**` 下的任何管理后台接口。\n\n### 4. 边界与约束\n- 仅改动用户前台相关文件，不要触及其他页面逻辑，不得大范围重构。\n- 不在本次任务中新增任何后端接口、数据库字段或业务规则。\n- 不修改路由参数名、请求格式等契约，保持与后端一致。\n- 页面交互完成后，数据状态需正确刷新，可采用重新请求或乐观更新策略。\n\n## 验收检查点\n- 圈子列表和详情页能正确调用所有 5 个接口，并展示真实数据。\n- 各页面 Loading、Empty、Error、Unauthorized 状态均有对应 UI 反馈，无白屏或崩溃。\n- 点击“加入”后，页面状态正确变更，成员身份与动态列表能反映最新情况。\n- 排名区域在未登录时仍可正常展示（公开访问），失败时有提示。\n- 整个实施过程未修改后端代码，未新增未约定接口，未使用 mock 数据。",
+    "routeIds": [
+      "GET:/api/circles",
+      "GET:/api/circles/:id",
+      "GET:/api/circles/:id/feed",
+      "GET:/api/circles/:id/ranking",
+      "POST:/api/circles/:id/join"
+    ],
+    "source": "deepseek",
+    "modelName": "deepseek-v4-pro",
+    "targetClient": "user",
+    "structuredContext": {
+      "featureName": "前端任务接入",
+      "targetClient": "user",
+      "routes": [
+        {
+          "routeId": "GET:/api/circles",
+          "method": "GET",
+          "path": "/api/circles",
+          "authType": "user",
+          "apiType": "authenticated",
+          "riskLevel": "low",
+          "frontendStatus": "planned",
+          "customDescription": "",
+          "autoDescription": "获取列表",
+          "relatedTables": [
+            "circles",
+            "circle_members"
+          ],
+          "frontendUsage": [
+            "api.ts"
+          ]
+        },
+        {
+          "routeId": "GET:/api/circles/:id",
+          "method": "GET",
+          "path": "/api/circles/:id",
+          "authType": "user",
+          "apiType": "authenticated",
+          "riskLevel": "low",
+          "frontendStatus": "planned",
+          "customDescription": "",
+          "autoDescription": "获取详情",
+          "relatedTables": [
+            "circles",
+            "circle_members",
+            "record_circles",
+            "slacking_records"
+          ],
+          "frontendUsage": []
+        },
+        {
+          "routeId": "POST:/api/circles/:id/join",
+          "method": "POST",
+          "path": "/api/circles/:id/join",
+          "authType": "user",
+          "apiType": "authenticated",
+          "riskLevel": "medium",
+          "frontendStatus": "planned",
+          "customDescription": "",
+          "autoDescription": "加入",
+          "relatedTables": [
+            "circles",
+            "circle_members",
+            "record_circles",
+            "slacking_records"
+          ],
+          "frontendUsage": []
+        },
+        {
+          "routeId": "GET:/api/circles/:id/feed",
+          "method": "GET",
+          "path": "/api/circles/:id/feed",
+          "authType": "user",
+          "apiType": "authenticated",
+          "riskLevel": "low",
+          "frontendStatus": "planned",
+          "customDescription": "",
+          "autoDescription": "获取动态",
+          "relatedTables": [
+            "circles",
+            "circle_members",
+            "record_circles",
+            "slacking_records"
+          ],
+          "frontendUsage": []
+        },
+        {
+          "routeId": "GET:/api/circles/:id/ranking",
+          "method": "GET",
+          "path": "/api/circles/:id/ranking",
+          "authType": "anonymous",
+          "apiType": "public",
+          "riskLevel": "low",
+          "frontendStatus": "planned",
+          "customDescription": "",
+          "autoDescription": "获取排名",
+          "relatedTables": [
+            "record_circles",
+            "slacking_records",
+            "group_members"
+          ],
+          "frontendUsage": []
+        }
+      ],
+      "constraints": [
+        "你只负责前端页面、交互和视觉实现，不要修改后端接口、数据库结构或后端业务逻辑。",
+        "不允许新增后端接口，不允许新增 mock 接口，不允许编造不存在的接口。",
+        "必须处理 loading / empty / error / unauthorized 状态。",
+        "只允许普通用户页面调用，禁止调用 /api/admin/**。"
+      ],
+      "acceptanceCriteria": [
+        "页面能正常调用列出的接口",
+        "接口失败时页面不崩溃",
+        "空数据时有清晰提示",
+        "未登录或权限不足时有合理提示",
+        "不出现 mock 数据冒充真实数据",
+        "不修改后端代码",
+        "不新增未约定接口",
+        "页面交互完成后数据状态能正确刷新"
+      ],
+      "antiPatterns": [
+        "不要改后端",
+        "不要新增接口",
+        "不要把 admin 接口接到普通用户页面",
+        "不要绕过登录状态",
+        "不要写死假数据",
+        "不要为了页面好看改变业务语义",
+        "不要删除已有功能",
+        "不要大范围重构无关页面"
+      ]
+    },
+    "status": "draft",
+    "createdAt": "2026-05-23T02:28:12.629Z",
+    "updatedAt": "2026-05-23T02:28:12.629Z"
+  }
+]
