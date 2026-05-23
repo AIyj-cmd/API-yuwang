@@ -171,3 +171,20 @@ MIT License
 **AIyj-cmd**
 
 - GitHub: [@AIyj-cmd](https://github.com/AIyj-cmd)
+
+
+## Claude Code 任务生成器
+
+- 新增「Claude Code 前端任务生成器」，仅生成前端执行任务，不再生成 Codex 后端任务。
+- 支持模板生成（默认可用）与 AI 优化生成（需开启 `API_MANAGER_ENABLE_AI_TASKS=true` 且配置 `DEEPSEEK_API_KEY`）。
+- DeepSeek 仅在后端调用，API Key 不会暴露到前端。
+- 工作流：选择接口 -> 确认 frontendStatus -> 生成任务 -> 复制给 Claude Code -> Claude Code 执行前端页面。
+
+### 新增环境变量
+
+```bash
+DEEPSEEK_API_KEY=
+DEEPSEEK_BASE_URL=https://api.deepseek.com
+DEEPSEEK_MODEL=deepseek-v4-pro
+API_MANAGER_ENABLE_AI_TASKS=false
+```

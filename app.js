@@ -933,3 +933,57 @@ function showToast(message) {
 
 // ===== 初始化 =====
 checkAuth().then(ok => { if (ok) loadData(); });
+
+let claudeTaskRouteIds = [];
+let aiTaskEnabled = false;
+let latestGeneratedDraft = null;
+
+async function loadManagerConfig() {
+  try { const r = await fetch('/api/manager/config'); const d = await r.json(); aiTaskEnabled = Boolean(d.aiTasksEnabled); const btn=document.getElementById('aiGenerateBtn'); if (btn) btn.style.display = aiTaskEnabled ? 'inline-block' : 'none'; } catch {}
+}
+
+function openClaudeTaskModalByIndexes(indexes) {
+  if (!indexes.length) return showToast('请先选择接口');
+  claudeTaskRouteIds = indexes.map(i => allRoutes[i]?.route_id).filter(Boolean);
+  document.getElementById('taskFeatureName').value = '前端任务接入';
+  document.getElementById('taskTargetClient').value = 'user';
+  document.getElementById('taskSelectedRoutes').innerHTML = claudeTaskRouteIds.map(id => `<div><code>${id}</code></div>`).join('');
+  document.getElementById('taskPromptPreview').value = '';
+  document.getElementById('claudeTaskModal').style.display = 'flex';
+}
+function openClaudeTaskModalFromSelection() { openClaudeTaskModalByIndexes(Array.from(selectedItems)); }
+function openClaudeTaskModalByModule(moduleKey) { const idxs = allRoutes.map((r,i)=>({r,i})).filter(x=>x.r.module===moduleKey).map(x=>x.i); openClaudeTaskModalByIndexes(idxs); }
+function openClaudeTaskModalByRoute(index) { openClaudeTaskModalByIndexes([index]); }
+function closeClaudeTaskModal() { document.getElementById('claudeTaskModal').style.display = 'none'; }
+
+async function generateTask(url) {
+  const payload = { routeIds: claudeTaskRouteIds, targetClient: document.getElementById('taskTargetClient').value, featureName: document.getElementById('taskFeatureName').value || '前端任务接入' };
+  const res = await fetch(url,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});
+  const data = await res.json();
+  if (!data.success) throw new Error(data.message || '生成失败');
+  latestGeneratedDraft = data.draft;
+  document.getElementById('taskPromptPreview').value = data.draft.generatedPrompt || '';
+}
+async function generateTemplateTask(){ try { await generateTask('/api/claude-tasks/generate-template'); showToast('模板任务生成成功'); } catch(e){showToast(e.message);} }
+async function generateAiTask(){ try { await generateTask('/api/claude-tasks/generate-ai'); showToast('AI 任务生成成功'); } catch(e){showToast(e.message);} }
+function copyTaskPrompt(){ const t=document.getElementById('taskPromptPreview'); t.select(); document.execCommand('copy'); showToast('已复制任务'); }
+async function saveTaskDraft(){ if(!latestGeneratedDraft) return showToast('请先生成任务'); await fetch(`/api/claude-tasks/${encodeURIComponent(latestGeneratedDraft.id)}`,{method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify({generatedPrompt:document.getElementById('taskPromptPreview').value,title:document.getElementById('taskFeatureName').value||latestGeneratedDraft.title})}); showToast('草稿已保存'); }
+
+async function loadClaudeDrafts() {
+  const res = await fetch('/api/claude-tasks'); const data = await res.json();
+  const list = data.drafts || [];
+  document.getElementById('claudeDraftList').innerHTML = list.map(d=>`<div style="border:1px solid #e5e7eb;border-radius:8px;padding:12px;margin-bottom:8px"><div style="font-weight:600">${d.title}</div><div style="font-size:12px;color:#6b7280">${d.source} · ${d.status}</div><textarea id="draft-${d.id}" style="width:100%;min-height:120px;margin-top:8px">${d.generatedPrompt||''}</textarea><div style="display:flex;gap:8px;margin-top:8px"><button class="btn btn-secondary" onclick="copyDraft('${d.id}')">复制</button><button class="btn btn-primary" onclick="updateDraft('${d.id}')">保存</button><button class="btn btn-secondary" onclick="markCopied('${d.id}')">标记已复制</button><button class="btn btn-secondary" onclick="deleteDraft('${d.id}')">删除</button></div></div>`).join('') || '<div>暂无草稿</div>';
+  document.getElementById('claudeDraftModal').style.display='flex';
+}
+function closeDraftModal(){ document.getElementById('claudeDraftModal').style.display='none'; }
+async function updateDraft(id){ const v=document.getElementById(`draft-${id}`).value; await fetch(`/api/claude-tasks/${encodeURIComponent(id)}`,{method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify({generatedPrompt:v})}); showToast('已保存'); }
+async function deleteDraft(id){ await fetch(`/api/claude-tasks/${encodeURIComponent(id)}`,{method:'DELETE'}); loadClaudeDrafts(); }
+async function markCopied(id){ await fetch(`/api/claude-tasks/${encodeURIComponent(id)}/copied`,{method:'POST'}); loadClaudeDrafts(); }
+function copyDraft(id){ const t=document.getElementById(`draft-${id}`); t.select(); document.execCommand('copy'); showToast('已复制'); }
+
+const _renderCategoryCard = renderCategoryCard;
+renderCategoryCard = function(key, data, mod) { return _renderCategoryCard(key,data,mod).replace('</div>','<div style="margin-top:8px"><button class="btn btn-secondary" onclick="event.stopPropagation();openClaudeTaskModalByModule(\''+key+'\')">为本模块生成前端任务</button></div></div>'); };
+const _viewDetail = viewDetail;
+viewDetail = function(index){ _viewDetail(index); const body=document.getElementById('detailBody'); body.insertAdjacentHTML('beforeend', `<div style="margin-top:12px"><button class="btn btn-primary" onclick="openClaudeTaskModalByRoute(${index})">生成 Claude Code 任务</button></div>`); };
+
+checkAuth().then(ok => { if (ok) { loadData(); loadManagerConfig(); } });

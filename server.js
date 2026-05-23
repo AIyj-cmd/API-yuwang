@@ -26,6 +26,12 @@ const YUWANG_SERVER_DIR = process.env.YUWANG_SERVER_DIR || '/root/yuwang/server'
 const YUWANG_REGISTRY_PATH = join(YUWANG_SERVER_DIR, 'api-registry.json');
 const YUWANG_BASE_URL = process.env.YUWANG_BASE_URL || 'http://localhost:3001';
 const API_MANAGER_SESSION_SECRET = process.env.API_MANAGER_SESSION_SECRET || '';
+
+const CLAUDE_TASK_DRAFTS_PATH = join(__dirname, 'claude-task-drafts.json');
+const API_MANAGER_ENABLE_AI_TASKS = process.env.API_MANAGER_ENABLE_AI_TASKS === 'true';
+const DEEPSEEK_API_KEY = process.env.DEEPSEEK_API_KEY || '';
+const DEEPSEEK_BASE_URL = process.env.DEEPSEEK_BASE_URL || 'https://api.deepseek.com';
+const DEEPSEEK_MODEL = process.env.DEEPSEEK_MODEL || 'deepseek-v4-pro';
 const ADMIN_USERNAME = process.env.API_MANAGER_ADMIN_USERNAME || 'admin';
 const ADMIN_PASSWORD = process.env.API_MANAGER_ADMIN_PASSWORD || '';
 const sessions = new Map();
@@ -130,6 +136,73 @@ function saveApiRegistry(routes) {
   }
 }
 async function parseBody(req) { return new Promise(resolve => { let b=''; req.on('data',c=>b+=c); req.on('end',()=>{ try{resolve(JSON.parse(b||'{}'));}catch{resolve({});}});}); }
+
+function loadClaudeTaskDrafts() { try { return JSON.parse(readFileSync(CLAUDE_TASK_DRAFTS_PATH, 'utf-8')); } catch { return []; } }
+function saveClaudeTaskDrafts(drafts) { writeFileSync(CLAUDE_TASK_DRAFTS_PATH, JSON.stringify(drafts, null, 2), 'utf-8'); }
+function buildContextFromRoutes(routes, body = {}) {
+  const allowUnreviewed = Boolean(body.allowUnreviewed);
+  const targetClient = body.targetClient === 'admin' ? 'admin' : 'user';
+  for (const r of routes) {
+    if (r.frontendStatus === 'deprecated') throw new Error(`接口 ${r.route_id} 已废弃，禁止生成任务`);
+    if (!allowUnreviewed && (r.frontendStatus === 'needs_review' || r.frontendStatus === 'internal')) throw new Error(`接口 ${r.route_id} 当前状态不允许生成任务`);
+    if ((r.frontendStatus === 'admin_only' || r.path.startsWith('/api/admin/')) && targetClient !== 'admin') throw new Error(`接口 ${r.route_id} 仅支持管理后台`);
+  }
+  const featureName = body.featureName || '前端任务接入';
+  const constraints = [
+    '你只负责前端页面、交互和视觉实现，不要修改后端接口、数据库结构或后端业务逻辑。',
+    '不允许新增后端接口，不允许新增 mock 接口，不允许编造不存在的接口。',
+    '必须处理 loading / empty / error / unauthorized 状态。'
+  ];
+  if (targetClient === 'admin') constraints.push('仅可在 /admin 相关页面实现，不要暴露到普通用户页面。');
+  else constraints.push('只允许普通用户页面调用，禁止调用 /api/admin/**。');
+  return {
+    featureName,
+    targetClient,
+    routes: routes.map(r => ({ routeId: r.route_id, method: r.method, path: r.path, authType: r.authType, apiType: r.apiType, riskLevel: r.riskLevel, frontendStatus: r.frontendStatus, customDescription: r.customDescription || '', autoDescription: r.autoDescription || '', relatedTables: r.dbTables || [], frontendUsage: r.frontendUsage || [] })),
+    constraints,
+    acceptanceCriteria: ['页面能正常调用列出的接口','接口失败时页面不崩溃','空数据时有清晰提示','未登录或权限不足时有合理提示','不出现 mock 数据冒充真实数据','不修改后端代码','不新增未约定接口','页面交互完成后数据状态能正确刷新'],
+    antiPatterns: ['不要改后端','不要新增接口','不要把 admin 接口接到普通用户页面','不要绕过登录状态','不要写死假数据','不要为了页面好看改变业务语义','不要删除已有功能','不要大范围重构无关页面']
+  };
+}
+function buildTemplatePrompt(context) {
+  const targetLabel = context.targetClient === 'admin' ? '管理后台' : '用户前台';
+  const routesText = context.routes.map((r, i) => `${i + 1}. ${r.method} ${r.path}
+   - 权限：${r.authType}
+   - 风险：${r.riskLevel}
+   - 前端状态：${r.frontendStatus}
+   - 用途：${r.customDescription || r.autoDescription || '待补充'}`).join('\n\n');
+  return `你只负责前端页面、交互和视觉实现，不要修改后端接口、数据库结构或后端业务逻辑。
+
+项目：yuwang
+
+目标：
+为【${context.featureName}】接入前端页面和交互。
+
+目标端：
+${targetLabel}
+
+可用接口：
+${routesText}
+
+前端要求：
+1. 使用现有项目的前端技术栈和现有 API 调用方式。
+2. 不要新增后端接口。
+3. 不要修改接口路径、请求方法或参数语义。
+4. 不要使用假数据替代真实接口。
+5. 需要处理 loading 状态。
+6. 需要处理空状态。
+7. 需要处理接口错误状态。
+8. 需要处理未登录或权限不足状态。
+9. 保持当前项目视觉风格，具体页面设计可以自由发挥。
+10. 如果是管理后台功能，只能放在 /admin 相关页面，不要暴露到普通用户页面。
+11. 如果是普通用户功能，不要调用 /api/admin/** 接口。
+
+验收标准：
+${context.acceptanceCriteria.map((x,i)=>`${i+1}. ${x}`).join('\n')}
+
+反模式：
+${context.antiPatterns.map((x,i)=>`${i+1}. ${x}`).join('\n')}`;
+}
 
 async function proxyRequest(method, path, headers, body) {
   const url = `${YUWANG_BASE_URL}${path}`;
@@ -285,6 +358,52 @@ const server = createServer(async (req, res) => {
     if (body.removed?.length) { const rm = new Set(body.removed.map(r => buildRouteId(r.method, r.path))); routes = routes.filter(r => !rm.has(r.route_id)); }
     saveApiRegistry(routes); res.writeHead(200, {'Content-Type':'application/json'}); res.end(JSON.stringify({success:true,count:routes.length})); return;
   }
+
+
+  if (path === '/api/manager/config' && method === 'GET') {
+    res.writeHead(200, {'Content-Type':'application/json'});
+    res.end(JSON.stringify({ success: true, aiTasksEnabled: API_MANAGER_ENABLE_AI_TASKS && Boolean(DEEPSEEK_API_KEY) }));
+    return;
+  }
+  if (path === '/api/claude-tasks/context' && method === 'POST') {
+    const body = await parseBody(req);
+    const routeIds = body.routeIds || [];
+    const registry = loadApiRegistry().map(r => ({ ...r, route_id: r.route_id || buildRouteId(r.method, r.path) }));
+    const routes = routeIds.map(id => registry.find(r => r.route_id === id));
+    if (routes.some(r => !r)) { res.writeHead(400, {'Content-Type':'application/json'}); res.end(JSON.stringify({ success:false, message:'存在无效 routeId' })); return; }
+    try { const context = buildContextFromRoutes(routes, body); res.writeHead(200, {'Content-Type':'application/json'}); res.end(JSON.stringify({ success:true, context })); } catch (e) { res.writeHead(400, {'Content-Type':'application/json'}); res.end(JSON.stringify({ success:false, message:e.message })); }
+    return;
+  }
+  if (path === '/api/claude-tasks/generate-template' && method === 'POST') {
+    const body = await parseBody(req);
+    const registry = loadApiRegistry().map(r => ({ ...r, route_id: r.route_id || buildRouteId(r.method, r.path) }));
+    const routes = (body.routeIds || []).map(id => registry.find(r => r.route_id === id));
+    if (!routes.length || routes.some(r => !r)) { res.writeHead(400, {'Content-Type':'application/json'}); res.end(JSON.stringify({ success:false, message:'routeIds 无效' })); return; }
+    try { const context = buildContextFromRoutes(routes, body); const generatedPrompt = buildTemplatePrompt(context); const now = new Date().toISOString(); const id = `task_${Date.now()}`;
+      const draft = { id, title: context.featureName, moduleKey: routes[0].module || 'other', targetClient: context.targetClient, routeIds: routes.map(r=>r.route_id), source:'template', modelName:null, structuredContext:context, generatedPrompt, status:'draft', createdAt:now, updatedAt:now };
+      const drafts = loadClaudeTaskDrafts(); drafts.push(draft); saveClaudeTaskDrafts(drafts);
+      res.writeHead(200, {'Content-Type':'application/json'}); res.end(JSON.stringify({ success:true, draft })); } catch (e) { res.writeHead(400, {'Content-Type':'application/json'}); res.end(JSON.stringify({ success:false, message:e.message })); }
+    return;
+  }
+  if (path === '/api/claude-tasks/generate-ai' && method === 'POST') {
+    if (!(API_MANAGER_ENABLE_AI_TASKS && DEEPSEEK_API_KEY)) { res.writeHead(403, {'Content-Type':'application/json'}); res.end(JSON.stringify({ success:false, message:'AI 功能未启用' })); return; }
+    const body = await parseBody(req);
+    const registry = loadApiRegistry().map(r => ({ ...r, route_id: r.route_id || buildRouteId(r.method, r.path) }));
+    const routes = (body.routeIds || []).map(id => registry.find(r => r.route_id === id));
+    try { const context = buildContextFromRoutes(routes, body);
+      const systemPrompt = '你是一个前端任务说明生成器。你只负责把结构化 API 信息改写成 Claude Code 可以执行的前端任务。你不能编造不存在的接口。你不能要求修改后端。你不能要求新增数据库字段。你不能要求新增后端接口。你不能隐藏权限风险。你必须明确区分用户前台和管理后台。你必须输出中文。你只输出最终任务正文，不要输出解释。';
+      const response = await fetch(`${DEEPSEEK_BASE_URL}/chat/completions`, { method:'POST', headers:{'Content-Type':'application/json','Authorization':`Bearer ${DEEPSEEK_API_KEY}`}, body: JSON.stringify({ model: DEEPSEEK_MODEL, messages:[{role:'system',content:systemPrompt},{role:'user',content:JSON.stringify(context)}], temperature:0.3 }) });
+      if (!response.ok) { const t=await response.text(); throw new Error(`DeepSeek 调用失败: ${response.status} ${t}`); }
+      const data = await response.json(); const generatedPrompt = data?.choices?.[0]?.message?.content?.trim(); if (!generatedPrompt) throw new Error('DeepSeek 未返回有效内容');
+      const now = new Date().toISOString(); const id = `task_${Date.now()}`; const draft = { id, title: context.featureName, moduleKey: routes[0].module || 'other', targetClient: context.targetClient, routeIds: routes.map(r=>r.route_id), source:'deepseek', modelName:DEEPSEEK_MODEL, structuredContext:context, generatedPrompt, status:'draft', createdAt:now, updatedAt:now };
+      const drafts = loadClaudeTaskDrafts(); drafts.push(draft); saveClaudeTaskDrafts(drafts); res.writeHead(200, {'Content-Type':'application/json'}); res.end(JSON.stringify({ success:true, draft }));
+    } catch (e) { res.writeHead(400, {'Content-Type':'application/json'}); res.end(JSON.stringify({ success:false, message:e.message })); }
+    return;
+  }
+  if (path === '/api/claude-tasks' && method === 'GET') { const drafts=loadClaudeTaskDrafts().sort((a,b)=>new Date(b.updatedAt)-new Date(a.updatedAt)); res.writeHead(200, {'Content-Type':'application/json'}); res.end(JSON.stringify({ success:true, drafts })); return; }
+  if (path.match(/^\/api\/claude-tasks\//) && method === 'PATCH') { const id = decodeURIComponent(path.split('/').pop()); const body = await parseBody(req); const drafts=loadClaudeTaskDrafts(); const idx=drafts.findIndex(d=>d.id===id); if (idx<0){res.writeHead(404,{'Content-Type':'application/json'});res.end(JSON.stringify({success:false,message:'草稿不存在'}));return;} const allowStatus=['draft','accepted','copied','archived']; if (body.status && !allowStatus.includes(body.status)) { res.writeHead(400,{'Content-Type':'application/json'});res.end(JSON.stringify({success:false,message:'无效状态'}));return;} ['title','generatedPrompt','status'].forEach(k=>{ if(body[k]!==undefined) drafts[idx][k]=body[k];}); drafts[idx].updatedAt=new Date().toISOString(); saveClaudeTaskDrafts(drafts); res.writeHead(200,{'Content-Type':'application/json'});res.end(JSON.stringify({success:true,draft:drafts[idx]})); return; }
+  if (path.match(/^\/api\/claude-tasks\/[^/]+\/copied$/) && method === 'POST') { const parts=path.split('/'); const id=decodeURIComponent(parts[3]); const drafts=loadClaudeTaskDrafts(); const idx=drafts.findIndex(d=>d.id===id); if(idx<0){res.writeHead(404,{'Content-Type':'application/json'});res.end(JSON.stringify({success:false,message:'草稿不存在'}));return;} drafts[idx].status='copied'; drafts[idx].updatedAt=new Date().toISOString(); saveClaudeTaskDrafts(drafts); res.writeHead(200,{'Content-Type':'application/json'}); res.end(JSON.stringify({success:true,draft:drafts[idx]})); return; }
+  if (path.match(/^\/api\/claude-tasks\//) && method === 'DELETE') { const id = decodeURIComponent(path.split('/').pop()); let drafts=loadClaudeTaskDrafts(); const before=drafts.length; drafts=drafts.filter(d=>d.id!==id); if(before===drafts.length){res.writeHead(404,{'Content-Type':'application/json'});res.end(JSON.stringify({success:false,message:'草稿不存在'}));return;} saveClaudeTaskDrafts(drafts); res.writeHead(200,{'Content-Type':'application/json'});res.end(JSON.stringify({success:true})); return; }
 
   // 模块管理
   const MODULES_JSON_PATH = join(__dirname, 'modules.json');
