@@ -738,7 +738,8 @@ function renderTestRecordSection(route) {
   const t = record.lastTest;
   const conclusionMap = { passed: '✅ 通过', failed: '❌ 失败', pending: '⏳ 待复查' };
   const conclusionColor = { passed: '#10b981', failed: '#ef4444', pending: '#f59e0b' };
-  const methodLabel = t.method === 'real' ? '🚀 真实请求' : '🧪 模拟请求';
+  const methodMap = { real: '🚀 真实请求', dryRun: '🧪 模拟请求', manual: '📝 手动记录' };
+  const methodLabel = methodMap[t.method] || '🧪 模拟请求';
   const timeStr = new Date(t.timestamp).toLocaleString('zh-CN');
   const historyCount = (record.history || []).length;
 
@@ -1730,15 +1731,23 @@ function renderRouteSelector(packId) {
   const container = document.getElementById('packRouteSelector');
   const pack = packId ? featurePacks.find(p => p.id === packId) : null;
   const selectedRoutes = new Set((pack?.routes || []).map(r => typeof r === 'string' ? r : `${r.method}:${r.path}`));
+  const targetClient = document.getElementById('packTargetClient').value;
 
   if (!allRoutes || !allRoutes.length) {
     container.innerHTML = '<div style="color:#9ca3af;font-size:12px;padding:8px">接口数据未加载，请先刷新</div>';
     return;
   }
 
+  // 按目标端过滤：user 只看 user/anonymous 接口，admin 只看 admin 接口
+  const filtered = allRoutes.filter(r => {
+    const auth = r.accessOverride || r.detectedAuth || r.authType || 'user';
+    if (targetClient === 'admin') return auth === 'admin';
+    return auth !== 'admin'; // user: 显示非 admin 的接口
+  });
+
   // Group by module
   const grouped = {};
-  allRoutes.forEach(r => {
+  filtered.forEach(r => {
     const mod = r.module || 'other';
     if (!grouped[mod]) grouped[mod] = [];
     grouped[mod].push(r);
@@ -1773,9 +1782,9 @@ async function savePack() {
 
   const selectedCb = document.querySelectorAll('.pack-route-cb:checked');
   const routes = Array.from(selectedCb).map(cb => {
-    const [method, path] = cb.value.split(':');
-    const route = allRoutes.find(r => r.method === method && r.path === path);
-    return { method, path, name: route?.name || '', route_id: route?.route_id || `${method}:${path}` };
+    const routeId = cb.value;
+    const route = allRoutes.find(r => (r.route_id || `${r.method}:${r.path}`) === routeId);
+    return { route_id: route.route_id, method: route.method, path: route.path, name: route.name || '' };
   });
 
   const body = {
@@ -1809,7 +1818,7 @@ async function savePack() {
       closePackModal();
       loadFeaturePacks();
     } else {
-      showToast('❌ ' + (data.message || '保存失败'));
+      showToast('❌ ' + (data.message || '保存失败') + (data.errors ? '\n' + data.errors.join('\n') : ''));
     }
   } catch (e) {
     showToast('❌ 网络错误');
